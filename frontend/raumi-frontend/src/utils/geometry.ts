@@ -1,17 +1,30 @@
-export type Point = {
+export class Point {
+  constructor(x: number, y: number) {
+    this.x = x;
+    this.y = y;
+  }
+
   x: number;
   y: number;
 };
 
-export type Wall = {
+export class Wall {
   id: number | null;
   x1: number;
   y1: number;
   x2: number;
   y2: number;
+
+  constructor(id: number | null, x1: number, y1: number, x2: number, y2: number) {
+    this.id = id;
+    this.x1 = x1;
+    this.y1 = y1;
+    this.x2 = x2;
+    this.y2 = y2;
+  }
 };
 
-export function snapPoint(point: Point, snapPoints: Point[], threshold: number = 30): Point {
+export function snapPoint(point: Point, snapPoints: Point[], threshold: number = 10): Point {
   let closest = null;
   let minDist = Infinity;
 
@@ -21,7 +34,6 @@ export function snapPoint(point: Point, snapPoints: Point[], threshold: number =
       minDist = dist;
       closest = p;
     }
-    console.log(dist)
   }
 
   return closest || point;
