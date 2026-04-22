@@ -2,6 +2,9 @@
   position: relative;
   width: 800px;
   height: 600px;
+  overflow: auto;
+  border: 1px solid #2a3b55;
+  background: #081927;
 }
 
 .div-tool-buttons {
@@ -12,18 +15,26 @@
   z-index: 10;
 
   display: flex;
-  /* align-items: center; */
   flex-direction: row;
   justify-content: flex-start;
   gap: 6px;
 }
 
-.button-snap {
+.button-snap,
+.button-zoom-level {
   position: absolute;
   top: 10px;
   right: 10px;
-
   z-index: 10;
+  background: rgba(255,255,255,0.08);
+  border: 1px solid rgba(255,255,255,0.12);
+  color: white;
+  padding: 6px 10px;
+  cursor: default;
+}
+
+.button-zoom-level {
+  top: 42px;
 }
 
 .room-name-input {

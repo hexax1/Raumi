@@ -1,5 +1,5 @@
 import { useState, useRef, type MouseEvent } from "react";
-import { Point, snapPoint, Wall, Room, isSamePoint, pointsAreClose, type Movable } from "../utils/geometry";
+import { Point, snapPoint, Wall, Room, isSamePoint, type Movable } from "../utils/geometry";
 import './RoomEditor.css'
 import ContextMenu from "./ContextMenu";
 
@@ -12,7 +12,9 @@ const RoomEditor: React.FC = () => {
   const [draftRoom, setDraftRoom] = useState<Room | null>(null);
   const [selectedRoomId, setSelectedRoomId] = useState<number | null>(null);
 
-  const [tool, setTool] = useState("wall");
+  const [tool, setTool] = useState<"wall" | "room" | "select" | "zoom-in" | "zoom-out">("wall");
+  const [zoom, setZoom] = useState(1);
+  const [canvasBounds, setCanvasBounds] = useState({ minX: 0, minY: 0, width: 1600, height: 1200 });
   const [snapEnabled, setSnapEnabled] = useState(true);
   const [contextMenuItems, setContextMenuItems] = useState(getDefaultContextMenuItems);
   const contextMenuModeRef = useRef<'default' | 'wall' | 'room'>('default');
@@ -22,14 +24,31 @@ const RoomEditor: React.FC = () => {
   const initialMousePos = useRef<Point | null>(null);
   const initialMovablePos = useRef<Movable | null>(null);
 
+  const CANVAS_MARGIN = 200;
+  const ZOOM_STEP = 1.2;
+  const ZOOM_MIN = 0.3;
+  const ZOOM_MAX = 3;
+
   function getMousePos(e: MouseEvent): Point {
     const rect = svgRef.current.getBoundingClientRect();
-    return new Point(e.clientX - rect.left, e.clientY - rect.top);
+    const x = (e.clientX - rect.left) / rect.width;
+    const y = (e.clientY - rect.top) / rect.height;
+
+    return new Point(
+      canvasBounds.minX + x * canvasBounds.width,
+      canvasBounds.minY + y * canvasBounds.height
+    );
   }
 
   function handleMouseDown(e: MouseEvent) {
     const target = e.target as HTMLElement;
     if (target.tagName.toLowerCase() === "input") return; // Input-Elemente sollen kein Zeichnen auslösen können
+
+    if (tool === "zoom-in" || tool === "zoom-out") {
+      const nextZoom = tool === "zoom-in" ? Math.min(zoom * ZOOM_STEP, ZOOM_MAX) : Math.max(zoom / ZOOM_STEP, ZOOM_MIN);
+      setZoom(nextZoom);
+      return;
+    }
 
     snapPointsRef.current = calculateSnapPoints();
 
@@ -57,18 +76,15 @@ const RoomEditor: React.FC = () => {
 
   function deleteWall(id: number) {
     setWalls(prev => prev.filter(w => w.id !== id));
-    setSelectedWallId(null);
   }
 
   function deleteRoom(id: number) {
     setRooms(prev => prev.filter(r => r.id !== id));
-    setSelectedRoomId(null);
   }
 
   function handleWallContextMenu(e: MouseEvent, id: number) {
     e.preventDefault();
     contextMenuModeRef.current = 'wall';
-    setSelectedWallId(id);
     setContextMenuItems([
       { label: "Delete", onClick: () => deleteWall(id) },
       ...getDefaultContextMenuItems()
@@ -78,7 +94,6 @@ const RoomEditor: React.FC = () => {
   function handleRoomContextMenu(e: MouseEvent, id: number) {
     e.preventDefault();
     contextMenuModeRef.current = 'room';
-    setSelectedRoomId(id);
     setContextMenuItems([
       { label: "Delete", onClick: () => deleteRoom(id) },
       ...getDefaultContextMenuItems()
@@ -89,13 +104,12 @@ const RoomEditor: React.FC = () => {
    * Die Methode wird aufgerufen, wenn auf irgendwas im SVG rechtsgeklickt wird.
    * Gilt auch für Walls und Rooms. Deren Kontextmenüs werden aber zuerst aufgerufen wegen bubbling.
    */
-  function handleEditorContextMenu(e: MouseEvent) { 
+  function handleEditorContextMenu() {
     if (contextMenuModeRef.current === 'wall' || contextMenuModeRef.current === 'room') {
       contextMenuModeRef.current = 'default';
       return;
     }
 
-    setSelectedWallId(null);
     setContextMenuItems(getDefaultContextMenuItems());
   }
 
@@ -114,14 +128,16 @@ const RoomEditor: React.FC = () => {
     }
   }
 
-  function handleMouseUp(e: MouseEvent) {
+  function handleMouseUp() {
     if (draftWall){ 
       if(draftWall.p1.x === draftWall.p2.x && draftWall.p1.y === draftWall.p2.y) {
         setDraftWall(null);
         return; // Keine Mauern mit 0 Länge erlauben
       }
 
-      setWalls([...walls, draftWall.copyWith({id: Date.now()})]);
+      const nextWall = draftWall.copyWith({id: Date.now()});
+      setWalls(prev => [...prev, nextWall]);
+      expandCanvasIfNeeded(nextWall.getSnappablePoints());
       setDraftWall(null);
     } 
     else if ( draftRoom) {
@@ -130,7 +146,9 @@ const RoomEditor: React.FC = () => {
         return; // Keine Räume mit 0 Fläche erlauben
       }
 
-      setRooms([...rooms, draftRoom.copyWith({id: Date.now()})]);
+      const nextRoom = draftRoom.copyWith({id: Date.now()});
+      setRooms(prev => [...prev, nextRoom]);
+      expandCanvasIfNeeded(nextRoom.getSnappablePoints());
       setDraftRoom(null);
     }
   }
@@ -152,6 +170,43 @@ const RoomEditor: React.FC = () => {
     return points
   }
 
+  function expandCanvasIfNeeded(points: Point[]) {
+    setCanvasBounds(prev => {
+      let minX = prev.minX;
+      let minY = prev.minY;
+      let maxX = prev.minX + prev.width;
+      let maxY = prev.minY + prev.height;
+      let changed = false;
+
+      points.forEach(point => {
+        if (point.x < minX + CANVAS_MARGIN) {
+          minX = Math.min(minX, point.x - CANVAS_MARGIN);
+          changed = true;
+        }
+        if (point.y < minY + CANVAS_MARGIN) {
+          minY = Math.min(minY, point.y - CANVAS_MARGIN);
+          changed = true;
+        }
+        if (point.x > maxX - CANVAS_MARGIN) {
+          maxX = Math.max(maxX, point.x + CANVAS_MARGIN);
+          changed = true;
+        }
+        if (point.y > maxY - CANVAS_MARGIN) {
+          maxY = Math.max(maxY, point.y + CANVAS_MARGIN);
+          changed = true;
+        }
+      });
+
+      if (!changed) return prev;
+      return {
+        minX,
+        minY,
+        width: Math.max(800, maxX - minX),
+        height: Math.max(600, maxY - minY)
+      };
+    });
+  }
+
   function moveMovable(movable: Movable, currentMouse: Point) {
     if (!initialMousePos.current || !initialMovablePos.current) return;
     const dx = currentMouse.x - initialMousePos.current.x;
@@ -164,10 +219,12 @@ const RoomEditor: React.FC = () => {
             return w.id === movable.id ? updated : w;
           })
         );
+        expandCanvasIfNeeded(updated.getSnappablePoints());
       } else if (updated instanceof Room) {
         setRooms(prev =>
           prev.map(r => (r.id === movable.id ? updated : r))
         );
+        expandCanvasIfNeeded(updated.getSnappablePoints());
       }
     }
   }
@@ -267,20 +324,32 @@ const RoomEditor: React.FC = () => {
             <button className={`select-button ${tool == "room" ? "active" : ""}`} onClick={() => setTool("room")}>
               Room
             </button>
+            <button className={`select-button ${tool == "zoom-in" ? "active" : ""}`} onClick={() => setTool("zoom-in")}>
+              Zoom In
+            </button>
+            <button className={`select-button ${tool == "zoom-out" ? "active" : ""}`} onClick={() => setTool("zoom-out")}>
+              Zoom Out
+            </button>
           </div>
 
           <button className="button-snap" onClick={() => setSnapEnabled(!snapEnabled)}>
             Snap: {snapEnabled ? "ON" : "OFF"}
           </button>
 
+          <button className="button-zoom-level" onClick={() => null}>
+            Zoom: {Math.round(zoom * 100)}%
+          </button>
+
           <svg
             ref={svgRef}
-            width="800"
-            height="600"
+            width={canvasBounds.width * zoom}
+            height={canvasBounds.height * zoom}
+            viewBox={`${canvasBounds.minX} ${canvasBounds.minY} ${canvasBounds.width} ${canvasBounds.height}`}
             onMouseDown={handleMouseDown}
             onMouseMove={handleMouseMove}
             onMouseUp={handleMouseUp}
             style={{
+              display: "block",
               background: "#0a2540",
               backgroundImage:
                 "linear-gradient( #1e3a5f 1px, transparent 1px), linear-gradient(90deg, #1e3a5f 1px, transparent 1px)",
