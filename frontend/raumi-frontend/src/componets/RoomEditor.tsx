@@ -1,5 +1,5 @@
 import { useState, useRef, type MouseEvent } from "react";
-import { Point, snapPoint, Wall, Room, isSamePoint, pointsAreClose } from "../utils/geometry";
+import { Point, snapPoint, Wall, Room, isSamePoint, pointsAreClose, type Movable } from "../utils/geometry";
 import './RoomEditor.css'
 import ContextMenu from "./ContextMenu";
 
@@ -17,17 +17,14 @@ const RoomEditor: React.FC = () => {
   const [contextMenuItems, setContextMenuItems] = useState(getDefaultContextMenuItems);
   const contextMenuModeRef = useRef<'default' | 'wall' | 'room'>('default');
 
-  const snapPointsRef = useRef<Point[]>([]);
+  const snapPointsRef = useRef<Point[]>([]); // Alle Punkte, an die gerade gesnapped werden kann. Wird bei jedem MouseDown neu berechnet.
   const svgRef = useRef<SVGSVGElement | null>(null);
   const initialMousePos = useRef<Point | null>(null);
-  const initialWallPos = useRef<Wall | null>(null);
+  const initialMovablePos = useRef<Movable | null>(null);
 
-  function getMousePos(e: MouseEvent) {
+  function getMousePos(e: MouseEvent): Point {
     const rect = svgRef.current.getBoundingClientRect();
-    return {
-      x: e.clientX - rect.left,
-      y: e.clientY - rect.top
-    };
+    return new Point(e.clientX - rect.left, e.clientY - rect.top);
   }
 
   function handleMouseDown(e: MouseEvent) {
@@ -41,7 +38,7 @@ const RoomEditor: React.FC = () => {
       const pos = getMousePos(e);
       const snapped = snapEnabled ? snapPoint(pos, snapPointsRef.current) : pos;
       
-      setDraftWall({ id: null, x1: snapped.x, y1: snapped.y, x2: snapped.x, y2: snapped.y });
+      setDraftWall(new Wall(null, new Point(snapped.x, snapped.y), new Point(snapped.x, snapped.y)));
     } 
     else if (tool == "room") {
       const pos = getMousePos(e);
@@ -80,7 +77,6 @@ const RoomEditor: React.FC = () => {
 
   function handleRoomContextMenu(e: MouseEvent, id: number) {
     e.preventDefault();
-    debugger;
     contextMenuModeRef.current = 'room';
     setSelectedRoomId(id);
     setContextMenuItems([
@@ -108,24 +104,24 @@ const RoomEditor: React.FC = () => {
       const pos = getMousePos(e);
       const snapped = snapEnabled ? snapPoint(pos, snapPointsRef.current) : pos;
 
-      setDraftWall({ ...draftWall, x2: snapped.x, y2: snapped.y });
+      setDraftWall(new Wall(draftWall.id, draftWall.p1, new Point(snapped.x, snapped.y)));
     } 
     else if (draftRoom){
       const pos = getMousePos(e);
       const snapped = snapEnabled ? snapPoint(pos, snapPointsRef.current) : pos;
 
-      setDraftRoom({ ...draftRoom, p2: new Point(snapped.x, snapped.y)})
+      setDraftRoom(new Room(draftRoom.id, draftRoom.p1, new Point(snapped.x, snapped.y)));
     }
   }
 
   function handleMouseUp(e: MouseEvent) {
     if (draftWall){ 
-      if(draftWall.x1 === draftWall.x2 || draftWall.y1 === draftWall.y2) {
+      if(draftWall.p1.x === draftWall.p2.x && draftWall.p1.y === draftWall.p2.y) {
         setDraftWall(null);
-        return; // Keine Mauern mit 0 Fläche erlauben
+        return; // Keine Mauern mit 0 Länge erlauben
       }
 
-      setWalls([...walls, { ...draftWall, id: Date.now() }]);
+      setWalls([...walls, draftWall.copyWith({id: Date.now()})]);
       setDraftWall(null);
     } 
     else if ( draftRoom) {
@@ -134,7 +130,7 @@ const RoomEditor: React.FC = () => {
         return; // Keine Räume mit 0 Fläche erlauben
       }
 
-      setRooms([...rooms, { ...draftRoom, id: Date.now() }]);
+      setRooms([...rooms, draftRoom.copyWith({id: Date.now()})]);
       setDraftRoom(null);
     }
   }
@@ -145,8 +141,8 @@ const RoomEditor: React.FC = () => {
     walls.forEach(w => {
       if(excluded.includes(w)) return; // Ganze Wand ausgeschlossen -> beide Endpunkte ignorieren
       
-      points.push(new Point(w.x1, w.y1));
-      points.push(new Point(w.x2, w.y2));
+      points.push(new Point(w.p1.x, w.p1.y));
+      points.push(new Point(w.p2.x, w.p2.y));
     });
 
     points = points.filter(p =>
@@ -156,83 +152,102 @@ const RoomEditor: React.FC = () => {
     return points
   }
 
-  function moveWall(id: number, currentMouse: Point) {
-    if (!initialMousePos.current || !initialWallPos.current) return;
+  function moveMovable(movable: Movable, currentMouse: Point) {
+    if (!initialMousePos.current || !initialMovablePos.current) return;
     const dx = currentMouse.x - initialMousePos.current.x;
     const dy = currentMouse.y - initialMousePos.current.y;
-    const updated = updateWall(initialWallPos.current, dx, dy);
+    const updated = updateMovable(initialMovablePos.current, dx, dy);
     if (updated) {
-      setWalls(prev =>
-        prev.map(w => (w.id === id ? updated : w))
-      );
+      if (updated instanceof Wall && movable instanceof Wall) {
+        setWalls(prev =>
+          prev.map(w => {
+            return w.id === movable.id ? updated : w;
+          })
+        );
+      } else if (updated instanceof Room) {
+        setRooms(prev =>
+          prev.map(r => (r.id === movable.id ? updated : r))
+        );
+      }
     }
   }
 
-  function updateWall(initialWall: Wall | null, dx: number, dy: number): Wall | null {
-    if (!initialWall) return null;
-    let movedWall = {
-      ...initialWall,
-      x1: initialWall.x1 + dx,
-      y1: initialWall.y1 + dy,
-      x2: initialWall.x2 + dx,
-      y2: initialWall.y2 + dy
-    };
+  function updateMovable(initialMovable: Movable | null, dx: number, dy: number): Movable | null {
+    if (!initialMovable) return null;
+    let movedMovable = initialMovable.copyWith({});
 
-    if(!snapEnabled) return movedWall;
+    // Zuerst die Punkte einfach um die Verschiebung verschieben, bevor das Snapping berücksichtigt wird. 
+    // So bleibt die relative Position der Punkte zueinander erhalten.
+    let initialDefiningPoints = initialMovable.getDefiningPoints();
+    let movedMovableDefiningPoints = movedMovable.getDefiningPoints();
+
+    for(let i = 0; i < initialDefiningPoints.length; i++) {
+      movedMovableDefiningPoints[i].x = initialDefiningPoints[i].x + dx;
+      movedMovableDefiningPoints[i].y = initialDefiningPoints[i].y + dy;
+    }
+
+    if(!snapEnabled) return movedMovable;
     
     // # Snapping
     // ## Endpunkte extrahieren
-    let movedP1 = {x: movedWall.x1, y: movedWall.y1};
-    let movedP2 = {x: movedWall.x2, y: movedWall.y2};
+    let snappingPoints = movedMovable.getSnappingPoints();
+    // let movedP1 = {x: movedWall.p1.x, y: movedWall.p1.y};
+    // let movedP2 = {x: movedWall.p2.x, y: movedWall.p2.y};
 
     // ## Snappen
-    let snappedP1 = snapPoint(movedP1, snapPointsRef.current)
-    let snappedP2 = snapPoint(movedP2, snapPointsRef.current)
+    // let snappedP1 = snapPoint(movedP1, snapPointsRef.current)
+    // let snappedP2 = snapPoint(movedP2, snapPointsRef.current)
+    let snappedPoints = []; // Array für gesnappte Punkte, oder die Punkte selbst, wenn sie nicht gesnapped wurden.
 
-    if(!isSamePoint(snappedP1, movedP1)) { // p1 snappt -> p2 genauso verschieben
-      snappedP2.x = movedP2.x + snappedP1.x - movedP1.x
-      snappedP2.y = movedP2.y + snappedP1.y - movedP1.y // Delta des Snappings: snapped - moved
-    } else if(!isSamePoint(snappedP2, movedP2)) {
-      snappedP1.x = movedP1.x + snappedP2.x - movedP2.x
-      snappedP1.y = movedP1.y + snappedP2.y - movedP2.y
+    snappingPoints.forEach(p => { // Versuch, jeden Punkt des zu bewegenden Elements zu snappen
+      snappedPoints.push(snapPoint(p, snapPointsRef.current));
+    });
+
+    for (let index = 0; index < snappedPoints.length; index++) {
+      const snappedP = snappedPoints[index];
+
+      if (!isSamePoint(snappedP, snappingPoints[index])) { // Wenn dieser Punkt gesnapped ist -> Alle anderen Punkte genauso verschieben
+        let snappingDeltaX = snappedP.x - snappingPoints[index].x;
+        let snappingDeltaY = snappedP.y - snappingPoints[index].y;
+
+        movedMovable.getDefiningPoints().forEach(p => {
+          p.x += snappingDeltaX;
+          p.y += snappingDeltaY;
+        });
+
+        break; // // Nur ein Punkt soll snappen, danach ist die Verschiebung für alle Punkte festgelegt
+      }
     }
 
-    movedWall.x1 = snappedP1.x; movedWall.y1 = snappedP1.y;
-    movedWall.x2 = snappedP2.x; movedWall.y2 = snappedP2.y;
-
-    return movedWall;
+    return movedMovable;
   }
 
-  function onMouseDownOnWall(e: MouseEvent, w: Wall) {
+  function onMouseDownOnMovable(e: MouseEvent, movable: Movable) {
     if(tool !== "select") return;
 
     e.stopPropagation();
+    
+    initialMousePos.current = getMousePos(e);
+    initialMovablePos.current = movable.copyWith({}); // Kopie erstellen, damit die ursprüngliche Position für die Berechnung der Verschiebung erhalten bleibt
 
-    const initialMouse = getMousePos(e);
-    const wall = w;
-    initialMousePos.current = initialMouse;
-    initialWallPos.current = { ...wall };
-
-    snapPointsRef.current = calculateSnapPoints([
-      new Point(wall.x1, wall.y1),
-      new Point(wall.x2, wall.y2)
-    ]);
+    snapPointsRef.current = calculateSnapPoints(movable.getSnappablePoints());
 
     function onMove(ev) {
       const currentMouse = getMousePos(ev);
-      moveWall(w.id, currentMouse);
+      moveMovable(movable, currentMouse);
     }
 
     function onUp() {
       window.removeEventListener("mousemove", onMove);
       window.removeEventListener("mouseup", onUp);
       initialMousePos.current = null;
-      initialWallPos.current = null;
+      initialMovablePos.current = null;
     }
 
     window.addEventListener("mousemove", onMove);
     window.addEventListener("mouseup", onUp);
   }
+
 
 
   return (
@@ -276,13 +291,13 @@ const RoomEditor: React.FC = () => {
             {walls.map(w => (
               <line
                 key={w.id}
-                x1={w.x1}
-                y1={w.y1}
-                x2={w.x2}
-                y2={w.y2}
+                x1={w.p1.x}
+                y1={w.p1.y}
+                x2={w.p2.x}
+                y2={w.p2.y}
                 stroke="white"
                 strokeWidth="4"
-                onMouseDown={(e) => onMouseDownOnWall(e, w)}
+                onMouseDown={(e) => onMouseDownOnMovable(e, w)}
                 onContextMenu={(e) => handleWallContextMenu(e, w.id)}
               />
             ))}
@@ -290,10 +305,10 @@ const RoomEditor: React.FC = () => {
             {/* Vorschau */}
             {draftWall && (
               <line
-                x1={draftWall.x1}
-                y1={draftWall.y1}
-                x2={draftWall.x2}
-                y2={draftWall.y2}
+                x1={draftWall.p1.x}
+                y1={draftWall.p1.y}
+                x2={draftWall.p2.x}
+                y2={draftWall.p2.y}
                 stroke="cyan"
                 strokeWidth="2"
                 strokeDasharray="5,5"
@@ -301,32 +316,35 @@ const RoomEditor: React.FC = () => {
             )}
 
             {/* Bestehende Räume*/}
-            {rooms.map(r => (<>
-              <rect
+            {rooms.map(r => (
+              <g 
                 key={r.id}
-                x={Math.min(r.p1.x, r.p2.x)}
-                y={Math.min(r.p1.y, r.p2.y)}
-                width={Math.abs(r.p2.x - r.p1.x)}
-                height={Math.abs(r.p2.y - r.p1.y)}
-                fill="rgba(0, 255, 255, 0.3)"
-                stroke="cyan"
-                strokeWidth="2"
-              />
-              <foreignObject
-                x={Math.min(r.p1.x, r.p2.x)}
-                y={Math.min(r.p1.y, r.p2.y)}
-                width={Math.abs(r.p2.x - r.p1.x)}
-                height={Math.abs(r.p2.y - r.p1.y)}
-                onContextMenu={(e) => handleRoomContextMenu(e, r.id)}
-              >
-                <div style={{width: "100%", height: "100%", display: "flex", justifyContent: "center", alignItems: "center"}}>
-                  <input style={{width: "auto"}} 
-                  value={r.label}
-                  type="text" 
-                  placeholder="Raumname" 
-                  className="room-name-input"/>
-                </div>
-              </foreignObject> </>
+                onMouseDown={(e) => onMouseDownOnMovable(e, r)}
+                onContextMenu={(e) => handleRoomContextMenu(e, r.id)}>
+                <rect
+                  x={Math.min(r.p1.x, r.p2.x)}
+                  y={Math.min(r.p1.y, r.p2.y)}
+                  width={Math.abs(r.p2.x - r.p1.x)}
+                  height={Math.abs(r.p2.y - r.p1.y)}
+                  fill="rgba(0, 255, 255, 0.3)"
+                  stroke="cyan"
+                  strokeWidth="2"
+                />
+                <foreignObject
+                  x={Math.min(r.p1.x, r.p2.x)}
+                  y={Math.min(r.p1.y, r.p2.y)}
+                  width={Math.abs(r.p2.x - r.p1.x)}
+                  height={Math.abs(r.p2.y - r.p1.y)}
+                >
+                  <div style={{width: "100%", height: "100%", display: "flex", justifyContent: "center", alignItems: "center"}}>
+                    <input style={{width: "auto"}} 
+                    value={r.label}
+                    type="text" 
+                    placeholder="Raumname" 
+                    className="room-name-input"/>
+                  </div>
+                </foreignObject> 
+              </g>
             ))}
 
             {/* Raumvorschau */}
