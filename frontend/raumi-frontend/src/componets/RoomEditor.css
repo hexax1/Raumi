@@ -25,3 +25,20 @@
 
   z-index: 10;
 }
+
+.room-name-input {
+  z-index: 8;
+  max-width: 100%;
+  text-align: center;
+  width: fit-content;
+  min-width: 20px;
+  background: transparent;
+  border: none;
+  color: white;
+  font-size: 16px;
+}
+
+.room-name-input:focus {
+  background: inherit;
+  border: none;
+}

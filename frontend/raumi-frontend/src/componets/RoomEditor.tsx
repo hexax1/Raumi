@@ -1,16 +1,21 @@
 import { useState, useRef, type MouseEvent } from "react";
-import { Point, snapPoint, Wall, isSamePoint, pointsAreClose } from "../utils/geometry";
+import { Point, snapPoint, Wall, Room, isSamePoint, pointsAreClose } from "../utils/geometry";
 import './RoomEditor.css'
 import ContextMenu from "./ContextMenu";
 
 const RoomEditor: React.FC = () => {
   const [walls, setWalls] = useState<Wall[]>([]);
-  const [tool, setTool] = useState("draw");
-  const [draft, setDraft] = useState<Wall | null>(null);
-  const [snapEnabled, setSnapEnabled] = useState(true);
+  const [draftWall, setDraftWall] = useState<Wall | null>(null);
   const [selectedWallId, setSelectedWallId] = useState<number | null>(null);
+
+  const [rooms, setRooms] = useState<Room[]>([]);
+  const [draftRoom, setDraftRoom] = useState<Room | null>(null);
+  const [selectedRoomId, setSelectedRoomId] = useState<number | null>(null);
+
+  const [tool, setTool] = useState("wall");
+  const [snapEnabled, setSnapEnabled] = useState(true);
   const [contextMenuItems, setContextMenuItems] = useState(getDefaultContextMenuItems);
-  const contextMenuModeRef = useRef<'default' | 'line'>('default');
+  const contextMenuModeRef = useRef<'default' | 'wall' | 'room'>('default');
 
   const snapPointsRef = useRef<Point[]>([]);
   const svgRef = useRef<SVGSVGElement | null>(null);
@@ -26,12 +31,23 @@ const RoomEditor: React.FC = () => {
   }
 
   function handleMouseDown(e: MouseEvent) {
-    if (tool == "draw"){
+    const target = e.target as HTMLElement;
+    if (target.tagName.toLowerCase() === "input") return; // Input-Elemente sollen kein Zeichnen auslösen können
+
+    snapPointsRef.current = calculateSnapPoints();
+
+    if (tool == "wall"){
 
       const pos = getMousePos(e);
-      const snapped = snapEnabled ? snapPoint(pos, calculateSnapPoints()) : pos;
+      const snapped = snapEnabled ? snapPoint(pos, snapPointsRef.current) : pos;
       
-      setDraft({ id: null, x1: snapped.x, y1: snapped.y, x2: snapped.x, y2: snapped.y });
+      setDraftWall({ id: null, x1: snapped.x, y1: snapped.y, x2: snapped.x, y2: snapped.y });
+    } 
+    else if (tool == "room") {
+      const pos = getMousePos(e);
+      const snapped = snapEnabled ? snapPoint(pos, snapPointsRef.current) : pos;
+
+      setDraftRoom(new Room(null, new Point(snapped.x, snapped.y), new Point(snapped.x, snapped.y)));
     }
   }
 
@@ -47,9 +63,14 @@ const RoomEditor: React.FC = () => {
     setSelectedWallId(null);
   }
 
-  function handleLineContextMenu(e: MouseEvent, id: number) {
+  function deleteRoom(id: number) {
+    setRooms(prev => prev.filter(r => r.id !== id));
+    setSelectedRoomId(null);
+  }
+
+  function handleWallContextMenu(e: MouseEvent, id: number) {
     e.preventDefault();
-    contextMenuModeRef.current = 'line';
+    contextMenuModeRef.current = 'wall';
     setSelectedWallId(id);
     setContextMenuItems([
       { label: "Delete", onClick: () => deleteWall(id) },
@@ -57,8 +78,23 @@ const RoomEditor: React.FC = () => {
     ]);
   }
 
-  function handleEditorContextMenu(e: MouseEvent) {
-    if (contextMenuModeRef.current === 'line') {
+  function handleRoomContextMenu(e: MouseEvent, id: number) {
+    e.preventDefault();
+    debugger;
+    contextMenuModeRef.current = 'room';
+    setSelectedRoomId(id);
+    setContextMenuItems([
+      { label: "Delete", onClick: () => deleteRoom(id) },
+      ...getDefaultContextMenuItems()
+    ]);
+  }
+
+  /**
+   * Die Methode wird aufgerufen, wenn auf irgendwas im SVG rechtsgeklickt wird.
+   * Gilt auch für Walls und Rooms. Deren Kontextmenüs werden aber zuerst aufgerufen wegen bubbling.
+   */
+  function handleEditorContextMenu(e: MouseEvent) { 
+    if (contextMenuModeRef.current === 'wall' || contextMenuModeRef.current === 'room') {
       contextMenuModeRef.current = 'default';
       return;
     }
@@ -68,19 +104,39 @@ const RoomEditor: React.FC = () => {
   }
 
   function handleMouseMove(e: MouseEvent) {
-    if (!draft) return;
+    if (draftWall){
+      const pos = getMousePos(e);
+      const snapped = snapEnabled ? snapPoint(pos, snapPointsRef.current) : pos;
 
-    const pos = getMousePos(e);
-    const snapped = snapEnabled ? snapPoint(pos, calculateSnapPoints()) : pos;
+      setDraftWall({ ...draftWall, x2: snapped.x, y2: snapped.y });
+    } 
+    else if (draftRoom){
+      const pos = getMousePos(e);
+      const snapped = snapEnabled ? snapPoint(pos, snapPointsRef.current) : pos;
 
-    setDraft({ ...draft, x2: snapped.x, y2: snapped.y });
+      setDraftRoom({ ...draftRoom, p2: new Point(snapped.x, snapped.y)})
+    }
   }
 
   function handleMouseUp(e: MouseEvent) {
-    if (!draft) return;
+    if (draftWall){ 
+      if(draftWall.x1 === draftWall.x2 || draftWall.y1 === draftWall.y2) {
+        setDraftWall(null);
+        return; // Keine Mauern mit 0 Fläche erlauben
+      }
 
-    setWalls([...walls, { ...draft, id: Date.now() }]);
-    setDraft(null);
+      setWalls([...walls, { ...draftWall, id: Date.now() }]);
+      setDraftWall(null);
+    } 
+    else if ( draftRoom) {
+      if(draftRoom.p1.x === draftRoom.p2.x || draftRoom.p1.y === draftRoom.p2.y) {
+        setDraftRoom(null);
+        return; // Keine Räume mit 0 Fläche erlauben
+      }
+
+      setRooms([...rooms, { ...draftRoom, id: Date.now() }]);
+      setDraftRoom(null);
+    }
   }
 
   function calculateSnapPoints(excluded: (Point | Wall)[] = []): Point[]{
@@ -147,7 +203,7 @@ const RoomEditor: React.FC = () => {
     return movedWall;
   }
 
-  function onMouseDownOnLine(e: MouseEvent, w: Wall) {
+  function onMouseDownOnWall(e: MouseEvent, w: Wall) {
     if(tool !== "select") return;
 
     e.stopPropagation();
@@ -158,8 +214,8 @@ const RoomEditor: React.FC = () => {
     initialWallPos.current = { ...wall };
 
     snapPointsRef.current = calculateSnapPoints([
-      { x: wall.x1, y: wall.y1 },
-      { x: wall.x2, y: wall.y2 }
+      new Point(wall.x1, wall.y1),
+      new Point(wall.x2, wall.y2)
     ]);
 
     function onMove(ev) {
@@ -190,8 +246,11 @@ const RoomEditor: React.FC = () => {
             <button className={`select-button ${tool == "select" ? "active" : ""}`} onClick={() => setTool("select")}>
               Select
             </button>
-            <button className={`select-button ${tool == "draw" ? "active" : ""}`} onClick={() => setTool("draw")}>
-              Draw
+            <button className={`select-button ${tool == "wall" ? "active" : ""}`} onClick={() => setTool("wall")}>
+              Wall
+            </button>
+            <button className={`select-button ${tool == "room" ? "active" : ""}`} onClick={() => setTool("room")}>
+              Room
             </button>
           </div>
 
@@ -223,18 +282,61 @@ const RoomEditor: React.FC = () => {
                 y2={w.y2}
                 stroke="white"
                 strokeWidth="4"
-                onMouseDown={(e) => onMouseDownOnLine(e, w)}
-                onContextMenu={(e) => handleLineContextMenu(e, w.id)}
+                onMouseDown={(e) => onMouseDownOnWall(e, w)}
+                onContextMenu={(e) => handleWallContextMenu(e, w.id)}
               />
             ))}
 
             {/* Vorschau */}
-            {draft && (
+            {draftWall && (
               <line
-                x1={draft.x1}
-                y1={draft.y1}
-                x2={draft.x2}
-                y2={draft.y2}
+                x1={draftWall.x1}
+                y1={draftWall.y1}
+                x2={draftWall.x2}
+                y2={draftWall.y2}
+                stroke="cyan"
+                strokeWidth="2"
+                strokeDasharray="5,5"
+              />
+            )}
+
+            {/* Bestehende Räume*/}
+            {rooms.map(r => (<>
+              <rect
+                key={r.id}
+                x={Math.min(r.p1.x, r.p2.x)}
+                y={Math.min(r.p1.y, r.p2.y)}
+                width={Math.abs(r.p2.x - r.p1.x)}
+                height={Math.abs(r.p2.y - r.p1.y)}
+                fill="rgba(0, 255, 255, 0.3)"
+                stroke="cyan"
+                strokeWidth="2"
+              />
+              <foreignObject
+                x={Math.min(r.p1.x, r.p2.x)}
+                y={Math.min(r.p1.y, r.p2.y)}
+                width={Math.abs(r.p2.x - r.p1.x)}
+                height={Math.abs(r.p2.y - r.p1.y)}
+                onContextMenu={(e) => handleRoomContextMenu(e, r.id)}
+              >
+                <div style={{width: "100%", height: "100%", display: "flex", justifyContent: "center", alignItems: "center"}}>
+                  <input style={{width: "auto"}} 
+                  value={r.label}
+                  type="text" 
+                  placeholder="Raumname" 
+                  className="room-name-input"/>
+                </div>
+              </foreignObject> </>
+            ))}
+
+            {/* Raumvorschau */}
+            {draftRoom && (
+              <rect
+                x={Math.min(draftRoom.p1.x, draftRoom.p2.x)}
+                y={Math.min(draftRoom.p1.y, draftRoom.p2.y)}
+                width={Math.abs(draftRoom.p2.x - draftRoom.p1.x)}
+                height={Math.abs(draftRoom.p2.y - draftRoom.p1.y)}
+                fill="rgba(0, 255, 255, 0.3)"
                 stroke="cyan"
                 strokeWidth="2"
                 strokeDasharray="5,5"

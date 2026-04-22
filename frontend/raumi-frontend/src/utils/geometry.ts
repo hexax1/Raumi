@@ -24,6 +24,20 @@ export class Wall {
   }
 };
 
+export class Room {
+  id: number | null;
+  label: string | null;
+  p1: Point;
+  p2: Point;
+  
+  constructor(id: number | null, p1: Point, p2: Point) {
+    this.id = id;
+    this.label = null;
+    this.p1 = p1;
+    this.p2 = p2;
+  }
+}
+
 export function snapPoint(point: Point, snapPoints: Point[], threshold: number = 10): Point {
   let closest = null;
   let minDist = Infinity;
