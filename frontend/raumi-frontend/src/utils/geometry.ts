@@ -70,13 +70,13 @@ export interface Movable {
  */
 export class Room implements Movable {
   id: number | null;
-  label: string | null;
+  label: string;
   p1: Point; // Upper Left Corner
   p2: Point; // Lower Right Corner
   
   constructor(id: number | null, p1: Point, p2: Point) {
     this.id = id;
-    this.label = null;
+    this.label = "";
     this.p1 = p1;
     this.p2 = p2;
   }

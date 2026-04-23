@@ -1,4 +1,4 @@
-import { useState, useRef, type MouseEvent } from "react";
+import { useState, useRef, type MouseEvent, useEffect } from "react";
 import { Point, snapPoint, Wall, Room, isSamePoint, type Movable } from "../utils/geometry";
 import './RoomEditor.css'
 import ContextMenu from "./ContextMenu";
@@ -6,11 +6,13 @@ import ContextMenu from "./ContextMenu";
 const RoomEditor: React.FC = () => {
   const [walls, setWalls] = useState<Wall[]>([]);
   const [draftWall, setDraftWall] = useState<Wall | null>(null);
-  const [selectedWallId, setSelectedWallId] = useState<number | null>(null);
 
   const [rooms, setRooms] = useState<Room[]>([]);
   const [draftRoom, setDraftRoom] = useState<Room | null>(null);
   const [selectedRoomId, setSelectedRoomId] = useState<number | null>(null);
+
+  const [selectedMovable, setSelectedMovable] = useState<Movable | null>(null);
+  const [draggingPointIndex, setDraggingPointIndex] = useState<number | null>(null);
 
   const [tool, setTool] = useState<"wall" | "room" | "select" | "zoom-in" | "zoom-out">("wall");
   const [zoom, setZoom] = useState(1);
@@ -21,6 +23,7 @@ const RoomEditor: React.FC = () => {
 
   const snapPointsRef = useRef<Point[]>([]); // Alle Punkte, an die gerade gesnapped werden kann. Wird bei jedem MouseDown neu berechnet.
   const svgRef = useRef<SVGSVGElement | null>(null);
+  const editorContainerRef = useRef<HTMLDivElement>(null);
   const initialMousePos = useRef<Point | null>(null);
   const initialMovablePos = useRef<Movable | null>(null);
 
@@ -29,23 +32,39 @@ const RoomEditor: React.FC = () => {
   const ZOOM_MIN = 0.3;
   const ZOOM_MAX = 3;
 
+  useEffect(() => {
+    editorContainerRef.current.scrollTo({
+      left: 360,
+      top: 290
+    });
+  }, []); // läuft nur einmal beim Mount
+
   function getMousePos(e: MouseEvent): Point {
     const rect = svgRef.current.getBoundingClientRect();
-    const x = (e.clientX - rect.left) / rect.width;
+    const x = (e.clientX - rect.left) / rect.width; // Prozentsatz: Wie viel von dem SVG hab ich "durchquert"
     const y = (e.clientY - rect.top) / rect.height;
 
     return new Point(
-      canvasBounds.minX + x * canvasBounds.width,
+      canvasBounds.minX + x * canvasBounds.width, // Position innerhalb der canvasWelt. Kann auch negativ sein.
       canvasBounds.minY + y * canvasBounds.height
     );
   }
 
   function handleMouseDown(e: MouseEvent) {
+    console.log(rooms)
     const target = e.target as HTMLElement;
     if (target.tagName.toLowerCase() === "input") return; // Input-Elemente sollen kein Zeichnen auslösen können
 
+    // Deselect if clicking on empty space
+    if (tool === "select" && target.tagName.toLowerCase() === "svg") {
+      setSelectedMovable(null);
+    }
+
     if (tool === "zoom-in" || tool === "zoom-out") {
       const nextZoom = tool === "zoom-in" ? Math.min(zoom * ZOOM_STEP, ZOOM_MAX) : Math.max(zoom / ZOOM_STEP, ZOOM_MIN);
+      // Viewport muss sich auch ändern
+      editorContainerRef.current.scrollLeft = (editorContainerRef.current.scrollLeft + editorContainerRef.current.clientWidth/2) * nextZoom / zoom - editorContainerRef.current.clientWidth/2
+      editorContainerRef.current.scrollTop = (editorContainerRef.current.scrollTop + editorContainerRef.current.clientHeight/2) * nextZoom / zoom - editorContainerRef.current.clientHeight/2
       setZoom(nextZoom);
       return;
     }
@@ -284,6 +303,7 @@ const RoomEditor: React.FC = () => {
 
     e.stopPropagation();
     
+    setSelectedMovable(movable); // Not yet in use
     initialMousePos.current = getMousePos(e);
     initialMovablePos.current = movable.copyWith({}); // Kopie erstellen, damit die ursprüngliche Position für die Berechnung der Verschiebung erhalten bleibt
 
@@ -313,123 +333,147 @@ const RoomEditor: React.FC = () => {
         items={contextMenuItems}
         onContextMenu={handleEditorContextMenu}
       >
-        <div className="editor-container">
-          <div className="div-tool-buttons">
-            <button className={`select-button ${tool == "select" ? "active" : ""}`} onClick={() => setTool("select")}>
-              Select
-            </button>
-            <button className={`select-button ${tool == "wall" ? "active" : ""}`} onClick={() => setTool("wall")}>
-              Wall
-            </button>
-            <button className={`select-button ${tool == "room" ? "active" : ""}`} onClick={() => setTool("room")}>
-              Room
-            </button>
-            <button className={`select-button ${tool == "zoom-in" ? "active" : ""}`} onClick={() => setTool("zoom-in")}>
-              Zoom In
-            </button>
-            <button className={`select-button ${tool == "zoom-out" ? "active" : ""}`} onClick={() => setTool("zoom-out")}>
-              Zoom Out
-            </button>
+        <div className="editor-wrapper">
+          <div className="toolbar">
+            <div className="toolbar-left">
+              <button className={`select-button ${tool == "select" ? "active" : ""}`} onClick={() => setTool("select")}>
+                Select
+              </button>
+              <button className={`select-button ${tool == "wall" ? "active" : ""}`} onClick={() => setTool("wall")}>
+                Wall
+              </button>
+              <button className={`select-button ${tool == "room" ? "active" : ""}`} onClick={() => setTool("room")}>
+                Room
+              </button>
+              <button className={`select-button ${tool == "zoom-in" ? "active" : ""}`} onClick={() => setTool("zoom-in")}>
+                Zoom In
+              </button>
+              <button className={`select-button ${tool == "zoom-out" ? "active" : ""}`} onClick={() => setTool("zoom-out")}>
+                Zoom Out
+              </button>
+            </div>
+
+            <div className="toolbar-right">
+              <button className="button-snap" onClick={() => setSnapEnabled(!snapEnabled)}>
+                Snap: {snapEnabled ? "ON" : "OFF"}
+              </button>
+              <button className="button-zoom-level" onClick={() => null}>
+                Zoom: {Math.round(zoom * 100)}%
+              </button>
+            </div>
+
           </div>
+          <div 
+            ref={editorContainerRef}
+            className="editor-container">
 
-          <button className="button-snap" onClick={() => setSnapEnabled(!snapEnabled)}>
-            Snap: {snapEnabled ? "ON" : "OFF"}
-          </button>
+            <svg
+              ref={svgRef}
+              width={canvasBounds.width * zoom}
+              height={canvasBounds.height * zoom}
+              viewBox={`${canvasBounds.minX} ${canvasBounds.minY} ${canvasBounds.width} ${canvasBounds.height}`}
+              onMouseDown={handleMouseDown}
+              onMouseMove={handleMouseMove}
+              onMouseUp={handleMouseUp}
+              style={{
+                display: "block",
+                background: "#0a2540",
+                backgroundImage:
+                  "linear-gradient( #1e3a5f 1px, transparent 1px), linear-gradient(90deg, #1e3a5f 1px, transparent 1px)",
+                backgroundSize: "20px 20px"
+              }}
+            >
+              {/* bestehende Wände */}
+              {walls.map(w => (
+                <line
+                  key={w.id}
+                  x1={w.p1.x}
+                  y1={w.p1.y}
+                  x2={w.p2.x}
+                  y2={w.p2.y}
+                  stroke={selectedMovable && selectedMovable.id === w.id ? "yellow" : "white"}
+                  strokeWidth={selectedMovable && selectedMovable.id === w.id ? "6" : "4"}
+                  onMouseDown={(e) => onMouseDownOnMovable(e, w)}
+                  onContextMenu={(e) => handleWallContextMenu(e, w.id)}
+                />
+              ))}
 
-          <button className="button-zoom-level" onClick={() => null}>
-            Zoom: {Math.round(zoom * 100)}%
-          </button>
+              {/* Vorschau */}
+              {draftWall && (
+                <line
+                  x1={draftWall.p1.x}
+                  y1={draftWall.p1.y}
+                  x2={draftWall.p2.x}
+                  y2={draftWall.p2.y}
+                  stroke="cyan"
+                  strokeWidth="2"
+                  strokeDasharray="5,5"
+                />
+              )}
 
-          <svg
-            ref={svgRef}
-            width={canvasBounds.width * zoom}
-            height={canvasBounds.height * zoom}
-            viewBox={`${canvasBounds.minX} ${canvasBounds.minY} ${canvasBounds.width} ${canvasBounds.height}`}
-            onMouseDown={handleMouseDown}
-            onMouseMove={handleMouseMove}
-            onMouseUp={handleMouseUp}
-            style={{
-              display: "block",
-              background: "#0a2540",
-              backgroundImage:
-                "linear-gradient( #1e3a5f 1px, transparent 1px), linear-gradient(90deg, #1e3a5f 1px, transparent 1px)",
-              backgroundSize: "20px 20px"
-            }}
-          >
-            {/* bestehende Wände */}
-            {walls.map(w => (
-              <line
-                key={w.id}
-                x1={w.p1.x}
-                y1={w.p1.y}
-                x2={w.p2.x}
-                y2={w.p2.y}
-                stroke="white"
-                strokeWidth="4"
-                onMouseDown={(e) => onMouseDownOnMovable(e, w)}
-                onContextMenu={(e) => handleWallContextMenu(e, w.id)}
-              />
-            ))}
+              {/* Bestehende Räume*/}
+              {rooms.map(r => (
+                <g 
+                  key={r.id}
+                  onMouseDown={(e) => onMouseDownOnMovable(e, r)}
+                  onContextMenu={(e) => handleRoomContextMenu(e, r.id)}>
+                  <rect
+                    x={Math.min(r.p1.x, r.p2.x)}
+                    y={Math.min(r.p1.y, r.p2.y)}
+                    width={Math.abs(r.p2.x - r.p1.x)}
+                    height={Math.abs(r.p2.y - r.p1.y)}
+                    fill="rgba(0, 255, 255, 0.3)"
+                    stroke={selectedMovable && selectedMovable.id === r.id ? "yellow" : "cyan"}
+                    strokeWidth={selectedMovable && selectedMovable.id === r.id ? "4" : "2"}
+                  />
+                  <foreignObject
+                    x={Math.min(r.p1.x, r.p2.x)}
+                    y={Math.min(r.p1.y, r.p2.y)}
+                    width={Math.abs(r.p2.x - r.p1.x)}
+                    height={Math.abs(r.p2.y - r.p1.y)}
+                  >
+                    <div style={{width: "100%", height: "100%", display: "flex", justifyContent: "center", alignItems: "center"}}>
+                      <input style={{width: "auto"}} 
+                      value={r.label}
+                      type="text" 
+                      placeholder="Raumname" 
+                      className="room-name-input"
+                      onChange={(e) => changeRoomName(r, e.target.value)}/>
+                    </div>
+                  </foreignObject> 
+                </g>
+              ))}
 
-            {/* Vorschau */}
-            {draftWall && (
-              <line
-                x1={draftWall.p1.x}
-                y1={draftWall.p1.y}
-                x2={draftWall.p2.x}
-                y2={draftWall.p2.y}
-                stroke="cyan"
-                strokeWidth="2"
-                strokeDasharray="5,5"
-              />
-            )}
-
-            {/* Bestehende Räume*/}
-            {rooms.map(r => (
-              <g 
-                key={r.id}
-                onMouseDown={(e) => onMouseDownOnMovable(e, r)}
-                onContextMenu={(e) => handleRoomContextMenu(e, r.id)}>
+              {/* Raumvorschau */}
+              {draftRoom && (
                 <rect
-                  x={Math.min(r.p1.x, r.p2.x)}
-                  y={Math.min(r.p1.y, r.p2.y)}
-                  width={Math.abs(r.p2.x - r.p1.x)}
-                  height={Math.abs(r.p2.y - r.p1.y)}
+                  x={Math.min(draftRoom.p1.x, draftRoom.p2.x)}
+                  y={Math.min(draftRoom.p1.y, draftRoom.p2.y)}
+                  width={Math.abs(draftRoom.p2.x - draftRoom.p1.x)}
+                  height={Math.abs(draftRoom.p2.y - draftRoom.p1.y)}
                   fill="rgba(0, 255, 255, 0.3)"
                   stroke="cyan"
                   strokeWidth="2"
+                  strokeDasharray="5,5"
                 />
-                <foreignObject
-                  x={Math.min(r.p1.x, r.p2.x)}
-                  y={Math.min(r.p1.y, r.p2.y)}
-                  width={Math.abs(r.p2.x - r.p1.x)}
-                  height={Math.abs(r.p2.y - r.p1.y)}
-                >
-                  <div style={{width: "100%", height: "100%", display: "flex", justifyContent: "center", alignItems: "center"}}>
-                    <input style={{width: "auto"}} 
-                    value={r.label}
-                    type="text" 
-                    placeholder="Raumname" 
-                    className="room-name-input"/>
-                  </div>
-                </foreignObject> 
-              </g>
-            ))}
+              )}
 
-            {/* Raumvorschau */}
-            {draftRoom && (
-              <rect
-                x={Math.min(draftRoom.p1.x, draftRoom.p2.x)}
-                y={Math.min(draftRoom.p1.y, draftRoom.p2.y)}
-                width={Math.abs(draftRoom.p2.x - draftRoom.p1.x)}
-                height={Math.abs(draftRoom.p2.y - draftRoom.p1.y)}
-                fill="rgba(0, 255, 255, 0.3)"
-                stroke="cyan"
-                strokeWidth="2"
-                strokeDasharray="5,5"
-              />
-            )}
-          </svg>
+              {/* Selection handles */}
+              {selectedMovable && selectedMovable.getDefiningPoints().map((point, index) => (
+                <circle
+                  key={`handle-${selectedMovable.id}-${index}`}
+                  cx={point.x}
+                  cy={point.y}
+                  r="8"
+                  fill="yellow"
+                  stroke="black"
+                  strokeWidth="2"
+                  style={{ cursor: 'pointer' }}
+                  // onMouseDown={(e) => onMouseDownOnPoint(e, selectedMovable, index)}
+                />
+              ))}
+            </svg>
+          </div>
         </div>
       </ContextMenu>
     </>
