@@ -117,10 +117,16 @@ const RoomEditor: React.FC = () => {
 
   function deleteWall(id: number) {
     setWalls(prev => prev.filter(w => w.id !== id));
+    if(selectedMovable.id === id){
+      setSelectedMovable(null)
+    }
   }
 
   function deleteRoom(id: number) {
     setRooms(prev => prev.filter(r => r.id !== id));
+    if(selectedMovable.id === id){
+      setSelectedMovable(null)
+    }
   }
 
   function addFloor() {
@@ -589,7 +595,7 @@ const RoomEditor: React.FC = () => {
                     height={Math.abs(r.p2.y - r.p1.y)}
                     fill="rgba(0, 255, 255, 0.3)"
                     stroke={selectedMovable && selectedMovable.id === r.id ? "yellow" : "cyan"}
-                    strokeWidth={selectedMovable && selectedMovable.id === r.id ? "4" : "2"}
+                    strokeWidth={selectedMovable && selectedMovable.id === r.id ? "3" : "2"}
                   />
                   <foreignObject
                     x={Math.min(r.p1.x, r.p2.x)}
