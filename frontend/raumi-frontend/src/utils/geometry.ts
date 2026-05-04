@@ -16,12 +16,12 @@ export class Point {
 };
 
 export class Wall implements Movable {
-  id: number | null;
+  id: number;
   p1: Point;
   p2: Point;
   floorId: number;
 
-  constructor(id: number | null, p1: Point, p2: Point, floorId: number) {
+  constructor(id: number, p1: Point, p2: Point, floorId: number) {
     this.id = id;
     this.p1 = p1;
     this.p2 = p2;
@@ -68,7 +68,7 @@ export interface Movable {
   getSnappingPoints(): Point[]; // Points that should snap when this Element is moved.
   getSnappablePoints(): Point[]; // Points that are potential hooks for other elements to snap to.
   getDefiningPoints(): Point[]; // Points that define the shape (e.g. for a Room, the upper left and lower right corner)
-  setDefiningPoints(definingPoints: Point[]);
+  setDefiningPoints(definingPoints: Point[]): void;
   copyWith(update: Partial<Movable>): Movable; // Create a copy of this element with some properties updated.
   move(dx: number, dy: number): void; // Move the element by the given delta.
 }
@@ -78,13 +78,13 @@ export interface Movable {
  * p2: Lower Right Corner
  */
 export class Room implements Movable {
-  id: number | null;
+  id: number;
   label: string;
   p1: Point; // Upper Left Corner
   p2: Point; // Lower Right Corner
   floorId: number;
   
-  constructor(id: number | null, p1: Point, p2: Point, floorId: number) {
+  constructor(id: number, p1: Point, p2: Point, floorId: number) {
     this.id = id;
     this.label = "";
     this.p1 = p1;

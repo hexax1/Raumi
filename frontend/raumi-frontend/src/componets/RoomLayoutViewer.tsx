@@ -1,6 +1,6 @@
 import { useState, useRef, type MouseEvent, useEffect } from "react";
 import { Point, snapPoint, Wall, Room, isSamePoint, type Movable } from "../utils/geometry";
-import './RoomEditor.css'
+import './RoomLayoutViewer.css'
 import ContextMenu from "./ContextMenu";
 import { checkEnterKey } from "../utils/input";
 
@@ -8,8 +8,11 @@ type Floor = {
   id: number;
   label: string;
 };
+interface RoomLayoutViewerProps {
+    onlyView: Boolean
+}
 
-const RoomEditor: React.FC = () => {
+const RoomLayoutViewer: React.FC<RoomLayoutViewerProps> = ({onlyView}) => {
   const [walls, setWalls] = useState<Wall[]>([]);
   const [draftWall, setDraftWall] = useState<Wall | null>(null);
 
@@ -34,7 +37,7 @@ const RoomEditor: React.FC = () => {
 
   const snapPointsRef = useRef<Point[]>([]); // Alle Punkte, an die gerade gesnapped werden kann. Wird bei jedem MouseDown neu berechnet.
   const svgRef = useRef<SVGSVGElement | null>(null);
-  const editorContainerRef = useRef<HTMLDivElement>(null);
+  const editorContainerRef = useRef<HTMLDivElement | null>(null);
   const initialMousePos = useRef<Point | null>(null);
   const initialMovablePos = useRef<Movable | null>(null);
   const initialDefiningPointPos = useRef<Point | null>(null);
@@ -45,13 +48,16 @@ const RoomEditor: React.FC = () => {
   const ZOOM_MAX = 3;
 
   useEffect(() => {
-    editorContainerRef.current.scrollTo({
-      left: 360,
-      top: 290
-    });
+    if(editorContainerRef.current)
+      editorContainerRef.current.scrollTo({
+        left: 360,
+        top: 290
+      });
   }, []); // läuft nur einmal beim Mount
 
   function getMousePos(e: MouseEvent): Point {
+    if(svgRef.current == null) return new Point(Number.MIN_VALUE, Number.MIN_VALUE)
+
     const rect = svgRef.current.getBoundingClientRect();
     const x = (e.clientX - rect.left) / rect.width; // Prozentsatz: Wie viel von dem SVG hab ich "durchquert"
     const y = (e.clientY - rect.top) / rect.height;
@@ -77,6 +83,8 @@ const RoomEditor: React.FC = () => {
     }
 
     if (tool === "zoom-in" || tool === "zoom-out") {
+      if(editorContainerRef.current == null) return;
+
       const nextZoom = tool === "zoom-in" ? Math.min(zoom * ZOOM_STEP, ZOOM_MAX) : Math.max(zoom / ZOOM_STEP, ZOOM_MIN);
       // Viewport muss sich auch ändern
       const maxScrollLeft = canvasBounds.width * nextZoom - editorContainerRef.current.clientWidth; // Maybe unnötig, weil automatisch geclampt wird
@@ -98,13 +106,13 @@ const RoomEditor: React.FC = () => {
       const pos = getMousePos(e);
       const snapped = snapEnabled ? snapPoint(pos, snapPointsRef.current) : pos;
       
-      setDraftWall(new Wall(null, new Point(snapped.x, snapped.y), new Point(snapped.x, snapped.y), selectedFloorId));
+      setDraftWall(new Wall(Date.now(), new Point(snapped.x, snapped.y), new Point(snapped.x, snapped.y), selectedFloorId));
     } 
     else if (tool == "room") {
       const pos = getMousePos(e);
       const snapped = snapEnabled ? snapPoint(pos, snapPointsRef.current) : pos;
 
-      setDraftRoom(new Room(null, new Point(snapped.x, snapped.y), new Point(snapped.x, snapped.y), selectedFloorId));
+      setDraftRoom(new Room(Date.now(), new Point(snapped.x, snapped.y), new Point(snapped.x, snapped.y), selectedFloorId));
     }
   }
 
@@ -117,14 +125,14 @@ const RoomEditor: React.FC = () => {
 
   function deleteWall(id: number) {
     setWalls(prev => prev.filter(w => w.id !== id));
-    if(selectedMovable.id === id){
+    if(selectedMovable && selectedMovable.id === id){
       setSelectedMovable(null)
     }
   }
 
   function deleteRoom(id: number) {
     setRooms(prev => prev.filter(r => r.id !== id));
-    if(selectedMovable.id === id){
+    if(selectedMovable && selectedMovable.id === id){
       setSelectedMovable(null)
     }
   }
@@ -227,7 +235,7 @@ const RoomEditor: React.FC = () => {
         return; // Keine Mauern mit 0 Länge erlauben
       }
 
-      const nextWall = draftWall.copyWith({id: Date.now(), floorId: selectedFloorId});
+      const nextWall = draftWall.copyWith({floorId: selectedFloorId});
       setWalls(prev => [...prev, nextWall]);
       expandCanvasIfNeeded(nextWall.getSnappablePoints());
       setDraftWall(null);
@@ -238,7 +246,7 @@ const RoomEditor: React.FC = () => {
         return; // Keine Räume mit 0 Fläche erlauben
       }
 
-      const nextRoom = draftRoom.copyWith({id: Date.now(), floorId: selectedFloorId});
+      const nextRoom = draftRoom.copyWith({floorId: selectedFloorId});
       setRooms(prev => [...prev, nextRoom]);
       expandCanvasIfNeeded(nextRoom.getSnappablePoints());
       setDraftRoom(null);
@@ -246,7 +254,7 @@ const RoomEditor: React.FC = () => {
   }
 
   function calculateSnapPoints(excluded: (Point | Wall)[] = []): Point[]{
-    let points = []
+    let points: Point[] = []
 
 
     points = points.concat(visibleWalls.flatMap(wall => wall.getSnappablePoints()));
@@ -308,7 +316,7 @@ const RoomEditor: React.FC = () => {
    * @returns the updated movable.
    */
   function moveDefiningPoint(movable: Movable, indexOfDefiningPoint: number, currentMouse: Point): Movable {
-    if (!initialMousePos.current || !initialDefiningPointPos.current) return;
+    if (!initialMousePos.current || !initialDefiningPointPos.current) return movable;
     const dx = currentMouse.x - initialMousePos.current.x;
     const dy = currentMouse.y - initialMousePos.current.y;
     const updatedPoint = updatePoint(initialDefiningPointPos.current, dx, dy);
@@ -333,8 +341,8 @@ const RoomEditor: React.FC = () => {
         );
         expandCanvasIfNeeded(updatedMovable.getSnappablePoints());
       }
-      return updatedMovable;
     }
+    return updatedMovable
   }
 
   /**
@@ -343,7 +351,7 @@ const RoomEditor: React.FC = () => {
    * @returns the updated movable.
    */
   function moveMovable(movable: Movable, currentMouse: Point): Movable {
-    if (!initialMousePos.current || !initialMovablePos.current) return;
+    if (!initialMousePos.current || !initialMovablePos.current) return movable;
     const dx = currentMouse.x - initialMousePos.current.x;
     const dy = currentMouse.y - initialMousePos.current.y;
     const updated = updateMovable(initialMovablePos.current, dx, dy);
@@ -363,11 +371,10 @@ const RoomEditor: React.FC = () => {
       }
       return updated;
     }
+    return movable; // If nothing changed
   }
 
-  function updatePoint(initialPoint: Point | null, dx: number, dy: number): Point | null {
-    if(!initialPoint) return null;
-
+  function updatePoint(initialPoint: Point, dx: number, dy: number): Point {
     let movedPoint = initialPoint.copyWith({});
 
     movedPoint.x += dx;
@@ -378,8 +385,7 @@ const RoomEditor: React.FC = () => {
     return snapPoint(movedPoint, snapPointsRef.current)
   }
 
-  function updateMovable(initialMovable: Movable | null, dx: number, dy: number): Movable | null {
-    if (!initialMovable) return null;
+  function updateMovable(initialMovable: Movable, dx: number, dy: number): Movable {
     let movedMovable = initialMovable.copyWith({});
 
     // Zuerst die Punkte einfach um die Verschiebung verschieben, bevor das Snapping berücksichtigt wird. 
@@ -397,7 +403,7 @@ const RoomEditor: React.FC = () => {
     // # Snapping
     // ## Endpunkte extrahieren
     let snappingPoints = movedMovable.getSnappingPoints();
-    let snappedPoints = []; // Array für gesnappte Punkte, oder die Punkte selbst, wenn sie nicht gesnapped wurden.
+    let snappedPoints: Point[] = []; // Array für gesnappte Punkte, oder die Punkte selbst, wenn sie nicht gesnapped wurden.
 
     snappingPoints.forEach(p => { // Versuch, jeden Punkt des zu bewegenden Elements zu snappen
       snappedPoints.push(snapPoint(p, snapPointsRef.current));
@@ -432,7 +438,7 @@ const RoomEditor: React.FC = () => {
 
     snapPointsRef.current = calculateSnapPoints(movable.getSnappablePoints());
 
-    function onMove(event) {
+    function onMove(event): void {
       const currentMouse = getMousePos(event);
       const updatedMovable = moveDefiningPoint(movable, indexOfPoint, currentMouse)
       setSelectedMovable(updatedMovable) // Für updates der Defining-Points im UI
@@ -678,4 +684,4 @@ const RoomEditor: React.FC = () => {
   );
 }
 
-export default RoomEditor;
+export default RoomLayoutViewer;

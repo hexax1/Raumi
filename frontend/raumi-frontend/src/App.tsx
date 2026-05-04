@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import reactLogo from './assets/react.svg'
 import viteLogo from './assets/vite.svg'
-import RoomEditor from './componets/RoomEditor'
+import RoomLayoutViewer from './componets/RoomLayoutViewer'
 import './App.css'
 
 function App() {
@@ -10,7 +10,7 @@ function App() {
   return (
     <>
       <section id="center">
-        <RoomEditor />
+        <RoomLayoutViewer onlyView={false}/>
       </section>
 
       <div className="ticks"></div>
