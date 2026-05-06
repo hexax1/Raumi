@@ -49,8 +49,8 @@ const RoomLayoutViewer: React.FC<RoomLayoutViewerProps> = ({onlyView}) => {
   const ZOOM_MAX = 3;
 
   useEffect(() => {
+    // Überschreibe mit Gespeicherten Daten aus der Datenbank
     getLayout().then((layout) => {
-      debugger;
       setFloors(layout.floors);
       setRooms(layout.rooms);
       setWalls(layout.walls);
