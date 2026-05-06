@@ -5,6 +5,7 @@ import org.springframework.boot.autoconfigure.SpringBootApplication;
 
 @SpringBootApplication
 public class BackendApplication {
+	public static final int FRONTEND_PORT = 5173;
 
 	public static void main(String[] args) {
 		SpringApplication.run(BackendApplication.class, args);

@@ -1,13 +1,11 @@
 import { useState, useRef, type MouseEvent, useEffect } from "react";
-import { Point, snapPoint, Wall, Room, isSamePoint, type Movable } from "../utils/geometry";
+import { type Point, snapToPoints, type Wall, type Room, isSamePoint, snapToAnything, constructRoom, copyWall, copyRoom, roomBehavior, wallBehavior, getBehavior, type GeometryObject, constructPoint, constructWall } from "../utils/geometry";
 import './RoomLayoutViewer.css'
 import ContextMenu from "./ContextMenu";
 import { checkEnterKey } from "../utils/input";
+import { putLayout, type Floor } from "../services/RoomLayoutService";
 
-type Floor = {
-  id: number;
-  label: string;
-};
+
 interface RoomLayoutViewerProps {
     onlyView: Boolean
 }
@@ -19,11 +17,14 @@ const RoomLayoutViewer: React.FC<RoomLayoutViewerProps> = ({onlyView}) => {
   const [rooms, setRooms] = useState<Room[]>([]);
   const [draftRoom, setDraftRoom] = useState<Room | null>(null);
 
-  const [floors, setFloors] = useState<Floor[]>([{ id: 1, label: "Floor 1" }] );
-  const [selectedFloorId, setSelectedFloorId] = useState<number>(1);
-  const [editingFloorLabelId, setEditingFloorLabelId] = useState<number | null>(null);
+  // Floor, der verwendet wird, wenn es keine anderen gibt
+  const initialFloor = { id: crypto.randomUUID(), label: "Floor 1" }
 
-  const [selectedMovable, setSelectedMovable] = useState<Movable | null>(null);
+  const [floors, setFloors] = useState<Floor[]>([initialFloor] );
+  const [selectedFloorId, setSelectedFloorId] = useState<string>(initialFloor.id);
+  const [editingFloorLabelId, setEditingFloorLabelId] = useState<string | null>(null);
+
+  const [selectedGeometryObject, setSelectedMovable] = useState<Wall | Room | null>(null);
 
   const [tool, setTool] = useState<"wall" | "room" | "select" | "zoom-in" | "zoom-out">("wall");
   const [zoom, setZoom] = useState(1);
@@ -39,7 +40,7 @@ const RoomLayoutViewer: React.FC<RoomLayoutViewerProps> = ({onlyView}) => {
   const svgRef = useRef<SVGSVGElement | null>(null);
   const editorContainerRef = useRef<HTMLDivElement | null>(null);
   const initialMousePos = useRef<Point | null>(null);
-  const initialMovablePos = useRef<Movable | null>(null);
+  const initialGOPos = useRef<GeometryObject | null>(null);
   const initialDefiningPointPos = useRef<Point | null>(null);
 
   const CANVAS_MARGIN = 200;
@@ -56,13 +57,13 @@ const RoomLayoutViewer: React.FC<RoomLayoutViewerProps> = ({onlyView}) => {
   }, []); // läuft nur einmal beim Mount
 
   function getMousePos(e: MouseEvent): Point {
-    if(svgRef.current == null) return new Point(Number.MIN_VALUE, Number.MIN_VALUE)
+    if(svgRef.current == null) return constructPoint(Number.MIN_VALUE, Number.MIN_VALUE)
 
     const rect = svgRef.current.getBoundingClientRect();
     const x = (e.clientX - rect.left) / rect.width; // Prozentsatz: Wie viel von dem SVG hab ich "durchquert"
     const y = (e.clientY - rect.top) / rect.height;
 
-    return new Point(
+    return constructPoint(
       canvasBounds.minX + x * canvasBounds.width, // Position innerhalb der canvasWelt. Kann auch negativ sein.
       canvasBounds.minY + y * canvasBounds.height
     );
@@ -104,15 +105,19 @@ const RoomLayoutViewer: React.FC<RoomLayoutViewerProps> = ({onlyView}) => {
     if (tool == "wall"){
 
       const pos = getMousePos(e);
-      const snapped = snapEnabled ? snapPoint(pos, snapPointsRef.current) : pos;
+      const snappedPoint = snapEnabled ? snapToAnything(pos, snapPointsRef.current, pos) : pos;
       
-      setDraftWall(new Wall(Date.now(), new Point(snapped.x, snapped.y), new Point(snapped.x, snapped.y), selectedFloorId));
+      setDraftWall(constructWall(crypto.randomUUID(), 
+        constructPoint(snappedPoint.x, snappedPoint.y), 
+        constructPoint(snappedPoint.x, snappedPoint.y), selectedFloorId));
     } 
     else if (tool == "room") {
       const pos = getMousePos(e);
-      const snapped = snapEnabled ? snapPoint(pos, snapPointsRef.current) : pos;
+      const snapped = snapEnabled ? snapToPoints(pos, snapPointsRef.current)[0] : pos;
 
-      setDraftRoom(new Room(Date.now(), new Point(snapped.x, snapped.y), new Point(snapped.x, snapped.y), selectedFloorId));
+      setDraftRoom(constructRoom(crypto.randomUUID(), 
+        constructPoint(snapped.x, snapped.y), 
+        constructPoint(snapped.x, snapped.y), selectedFloorId));
     }
   }
 
@@ -123,28 +128,28 @@ const RoomLayoutViewer: React.FC<RoomLayoutViewerProps> = ({onlyView}) => {
     ];
   }
 
-  function deleteWall(id: number) {
+  function deleteWall(id: string) {
     setWalls(prev => prev.filter(w => w.id !== id));
-    if(selectedMovable && selectedMovable.id === id){
+    if(selectedGeometryObject && selectedGeometryObject.id === id){
       setSelectedMovable(null)
     }
   }
 
-  function deleteRoom(id: number) {
+  function deleteRoom(id: string) {
     setRooms(prev => prev.filter(r => r.id !== id));
-    if(selectedMovable && selectedMovable.id === id){
+    if(selectedGeometryObject && selectedGeometryObject.id === id){
       setSelectedMovable(null)
     }
   }
 
   function addFloor() {
-    const nextFloorId = Date.now();
+    const nextFloorId = crypto.randomUUID();
     setFloors(prev => [...prev, { id: nextFloorId, label: `Floor ${prev.length + 1}` }]);
     setSelectedFloorId(nextFloorId);
     setSelectedMovable(null);
   }
 
-  function deleteFloor(id: number){
+  function deleteFloor(id: string){
     if (floors.length <= 1) return;
     if(selectedFloorId === id){
       setSelectedMovable(null);
@@ -158,15 +163,7 @@ const RoomLayoutViewer: React.FC<RoomLayoutViewerProps> = ({onlyView}) => {
     setRooms(prev => prev.filter(r => r.floorId !== id));
   }
 
-  /**
-   * Just activates a input-Field to edit.
-   * @param id The floor to rename
-   */
-  function renameFloor(id: number){
-    
-  }
-
-  function handleWallContextMenu(e: MouseEvent, id: number) {
+  function handleWallContextMenu(e: MouseEvent, id: string) {
     e.preventDefault();
     contextMenuModeRef.current = 'wall';
     setContextMenuItems([
@@ -175,7 +172,7 @@ const RoomLayoutViewer: React.FC<RoomLayoutViewerProps> = ({onlyView}) => {
     ]);
   }
 
-  function handleRoomContextMenu(e: MouseEvent, id: number) {
+  function handleRoomContextMenu(e: MouseEvent, id: string) {
     e.preventDefault();
     contextMenuModeRef.current = 'room';
     setContextMenuItems([
@@ -184,16 +181,15 @@ const RoomLayoutViewer: React.FC<RoomLayoutViewerProps> = ({onlyView}) => {
     ]);
   }
 
-  function handleFloorContextMenu(e: MouseEvent, id: number) {
+  function handleFloorContextMenu(e: MouseEvent, id: string) {
     e.preventDefault();
     contextMenuModeRef.current = 'floor';
     const lastFloor = floors.length <= 1;
     const additionalMenuItems = []
     if(!lastFloor){
-      additionalMenuItems.push({ label: "Delete", onClick: () => deleteFloor(id) })
+      additionalMenuItems.push({ label: "Delete", onClick: () => deleteFloor(id) });
     }
-    additionalMenuItems.push({ label: "Rename", onClick: () => setEditingFloorLabelId(id) })
-    console.log(additionalMenuItems)
+    additionalMenuItems.push({ label: "Rename", onClick: () => setEditingFloorLabelId(id) });
     setContextMenuItems([
       ...additionalMenuItems, 
       ...getDefaultContextMenuItems()
@@ -216,15 +212,15 @@ const RoomLayoutViewer: React.FC<RoomLayoutViewerProps> = ({onlyView}) => {
   function handleMouseMove(e: MouseEvent) {
     if (draftWall){
       const pos = getMousePos(e);
-      const snapped = snapEnabled ? snapPoint(pos, snapPointsRef.current) : pos;
+      const snappedPoint = snapEnabled ? snapToAnything(pos, snapPointsRef.current, draftWall.p1) : pos;
 
-      setDraftWall(new Wall(draftWall.id, draftWall.p1, new Point(snapped.x, snapped.y), draftWall.floorId));
+      setDraftWall(constructWall(draftWall.id, draftWall.p1, constructPoint(snappedPoint.x, snappedPoint.y), draftWall.floorId));
     } 
     else if (draftRoom){
       const pos = getMousePos(e);
-      const snapped = snapEnabled ? snapPoint(pos, snapPointsRef.current) : pos;
+      const snappedPoint = snapEnabled ? snapToPoints(pos, snapPointsRef.current)[0] : pos;
 
-      setDraftRoom(new Room(draftRoom.id, draftRoom.p1, new Point(snapped.x, snapped.y), draftRoom.floorId));
+      setDraftRoom(constructRoom(draftRoom.id, draftRoom.p1, constructPoint(snappedPoint.x, snappedPoint.y), draftRoom.floorId));
     }
   }
 
@@ -235,9 +231,9 @@ const RoomLayoutViewer: React.FC<RoomLayoutViewerProps> = ({onlyView}) => {
         return; // Keine Mauern mit 0 Länge erlauben
       }
 
-      const nextWall = draftWall.copyWith({floorId: selectedFloorId});
+      const nextWall = copyWall(draftWall, {floorId: selectedFloorId});
       setWalls(prev => [...prev, nextWall]);
-      expandCanvasIfNeeded(nextWall.getSnappablePoints());
+      expandCanvasIfNeeded(wallBehavior.getSnappablePoints(nextWall));
       setDraftWall(null);
     } 
     else if ( draftRoom) {
@@ -246,19 +242,19 @@ const RoomLayoutViewer: React.FC<RoomLayoutViewerProps> = ({onlyView}) => {
         return; // Keine Räume mit 0 Fläche erlauben
       }
 
-      const nextRoom = draftRoom.copyWith({floorId: selectedFloorId});
+      const nextRoom = copyRoom(draftRoom, {floorId: selectedFloorId});
       setRooms(prev => [...prev, nextRoom]);
-      expandCanvasIfNeeded(nextRoom.getSnappablePoints());
+      expandCanvasIfNeeded(roomBehavior.getSnappablePoints(nextRoom));
       setDraftRoom(null);
     }
   }
 
-  function calculateSnapPoints(excluded: (Point | Wall)[] = []): Point[]{
+  function calculateSnapPoints(excluded: Point[] = []): Point[]{
     let points: Point[] = []
 
 
-    points = points.concat(visibleWalls.flatMap(wall => wall.getSnappablePoints()));
-    points = points.concat(visibleRooms.flatMap(room => room.getSnappablePoints()));
+    points = points.concat(visibleWalls.flatMap(wall => wallBehavior.getSnappablePoints(wall)));
+    points = points.concat(visibleRooms.flatMap(room => roomBehavior.getSnappablePoints(room)));
 
     // visibleWalls.forEach(wall => {
     //   if(excluded.includes(wall)) return; // Ganze Wand ausgeschlossen -> beide Endpunkte ignorieren
@@ -267,7 +263,7 @@ const RoomLayoutViewer: React.FC<RoomLayoutViewerProps> = ({onlyView}) => {
     // });
 
     points = points.filter(p =>
-      !excluded.some(e => e instanceof Point && isSamePoint(e, p)) // Only non-excluded
+      !excluded.some(e => isSamePoint(e, p)) // Only non-excluded
     );
 
     return points
@@ -315,98 +311,120 @@ const RoomLayoutViewer: React.FC<RoomLayoutViewerProps> = ({onlyView}) => {
    * @param currentMouse current mouse position. Used in par with initialMovablePos to calculate the delta.
    * @returns the updated movable.
    */
-  function moveDefiningPoint(movable: Movable, indexOfDefiningPoint: number, currentMouse: Point): Movable {
+  function moveDefiningPoint(movable: GeometryObject, indexOfDefiningPoint: number, currentMouse: Point): Wall | Room {
     if (!initialMousePos.current || !initialDefiningPointPos.current) return movable;
+
     const dx = currentMouse.x - initialMousePos.current.x;
     const dy = currentMouse.y - initialMousePos.current.y;
-    const updatedPoint = updatePoint(initialDefiningPointPos.current, dx, dy);
-    const updatedMovable = movable.copyWith({});
-    updatedMovable.setDefiningPoints(updatedMovable.getDefiningPoints().map((point, index) => 
-      index === indexOfDefiningPoint 
-        ? updatedPoint 
-        : point
-    ))
+
+    // Is used to snap to an axis that fixedPoint lies on
+    let fixedPoint: Point | null = 
+      movable.type === "wall"
+        ? wallBehavior.getDefiningPoints(movable)[1-indexOfDefiningPoint]
+        : null;
+
+    // move the defining point and construct a new movable out of it
+    const updatedPoint = updatePoint(initialDefiningPointPos.current, dx, dy, fixedPoint);
 
     if (updatedPoint) {
-      if (updatedMovable instanceof Wall && movable instanceof Wall) {
+      if (movable.type === "wall") {
+        const updatedMovable = wallBehavior.setDefiningPoints(movable, wallBehavior.getDefiningPoints(movable)
+          .map((point, index) =>
+            index === indexOfDefiningPoint
+              ? updatedPoint
+              : point));
+
         setWalls(prev =>
           prev.map(w => {
             return w.id === movable.id ? updatedMovable : w;
           })
         );
-        expandCanvasIfNeeded(updatedMovable.getSnappablePoints());
-      } else if (updatedMovable instanceof Room) {
+        expandCanvasIfNeeded(wallBehavior.getSnappablePoints(updatedMovable));
+        return updatedMovable;
+      } 
+      else if (movable.type === "room") {
+        const updatedMovable = roomBehavior.setDefiningPoints(movable, roomBehavior.getDefiningPoints(movable)
+          .map((point, index) =>
+            index === indexOfDefiningPoint
+              ? updatedPoint
+              : point));
+
         setRooms(prev =>
-          prev.map(r => (r.id === movable.id ? updatedMovable : r))
+          prev.map(r => (r.id === movable.id ? updatedMovable as Room : r))
         );
-        expandCanvasIfNeeded(updatedMovable.getSnappablePoints());
+        expandCanvasIfNeeded(roomBehavior.getSnappablePoints(updatedMovable));
+        return updatedMovable;
       }
     }
-    return updatedMovable
+    return {...movable}
   }
 
   /**
-   * @param movable movable To move.
+   * @param geometryObject geometryObject To move.
    * @param currentMouse current mouse position. Used in par with initialMovablePos to calculate the delta.
    * @returns the updated movable.
    */
-  function moveMovable(movable: Movable, currentMouse: Point): Movable {
-    if (!initialMousePos.current || !initialMovablePos.current) return movable;
+  function moveGeometryObject(geometryObject: GeometryObject, currentMouse: Point): GeometryObject {
+    if (!initialMousePos.current || !initialGOPos.current) return geometryObject;
     const dx = currentMouse.x - initialMousePos.current.x;
     const dy = currentMouse.y - initialMousePos.current.y;
-    const updated = updateMovable(initialMovablePos.current, dx, dy);
+    const updated = updateGeometryObject(initialGOPos.current, dx, dy);
     if (updated) {
-      if (updated instanceof Wall && movable instanceof Wall) {
+      if(updated.type == "wall"){
         setWalls(prev =>
           prev.map(w => {
-            return w.id === movable.id ? updated : w;
+            return w.id === updated.id ? updated : w;
           })
         );
-        expandCanvasIfNeeded(updated.getSnappablePoints());
-      } else if (updated instanceof Room) {
+        expandCanvasIfNeeded(wallBehavior.getSnappablePoints(updated));
+      } else if(updated.type == "room"){
         setRooms(prev =>
-          prev.map(r => (r.id === movable.id ? updated : r))
+          prev.map(r => (r.id === updated.id ? updated : r))
         );
-        expandCanvasIfNeeded(updated.getSnappablePoints());
+        expandCanvasIfNeeded(roomBehavior.getSnappablePoints(updated));
       }
+      
       return updated;
     }
-    return movable; // If nothing changed
+    return geometryObject; // If nothing changed
   }
 
-  function updatePoint(initialPoint: Point, dx: number, dy: number): Point {
-    let movedPoint = initialPoint.copyWith({});
+  // fixedPoint: Eventuell ein Punkt, dessen Achsen snappable sein sollen.
+  function updatePoint(initialPoint: Point, dx: number, dy: number, fixedPoint: Point | null = null): Point {
+    let movedPoint = {...initialPoint};
 
     movedPoint.x += dx;
     movedPoint.y += dy;
 
     if(!snapEnabled) return movedPoint;
 
-    return snapPoint(movedPoint, snapPointsRef.current)
+    return fixedPoint 
+      ? snapToAnything(movedPoint, snapPointsRef.current, fixedPoint) 
+      : snapToPoints(movedPoint, snapPointsRef.current)[0];
   }
 
-  function updateMovable(initialMovable: Movable, dx: number, dy: number): Movable {
-    let movedMovable = initialMovable.copyWith({});
+  function updateGeometryObject(initialGO: GeometryObject, dx: number, dy: number): GeometryObject {
+    let movedGO = {...initialGO};
 
-    // Zuerst die Punkte einfach um die Verschiebung verschieben, bevor das Snapping berücksichtigt wird. 
-    // So bleibt die relative Position der Punkte zueinander erhalten.
-    let initialDefiningPoints = initialMovable.getDefiningPoints();
-    let movedMovableDefiningPoints = movedMovable.getDefiningPoints();
+    // definierende Punkte initialisieren
+    let initialDefiningPoints = getBehavior(initialGO).getDefiningPoints(initialGO);
+    let movedGODefiningPoints = getBehavior(movedGO).getDefiningPoints(movedGO);
 
+    // Verschiebe alle Punkte
     for(let i = 0; i < initialDefiningPoints.length; i++) {
-      movedMovableDefiningPoints[i].x = initialDefiningPoints[i].x + dx;
-      movedMovableDefiningPoints[i].y = initialDefiningPoints[i].y + dy;
+      movedGODefiningPoints[i].x = initialDefiningPoints[i].x + dx;
+      movedGODefiningPoints[i].y = initialDefiningPoints[i].y + dy;
     }
 
-    if(!snapEnabled) return movedMovable;
-    
+    if(!snapEnabled) return movedGO;
+
     // # Snapping
     // ## Endpunkte extrahieren
-    let snappingPoints = movedMovable.getSnappingPoints();
+    let snappingPoints = getBehavior(movedGO).getSnappingPoints(movedGO);
     let snappedPoints: Point[] = []; // Array für gesnappte Punkte, oder die Punkte selbst, wenn sie nicht gesnapped wurden.
 
     snappingPoints.forEach(p => { // Versuch, jeden Punkt des zu bewegenden Elements zu snappen
-      snappedPoints.push(snapPoint(p, snapPointsRef.current));
+      snappedPoints.push(snapToPoints(p, snapPointsRef.current)[0]);
     });
 
     for (let index = 0; index < snappedPoints.length; index++) {
@@ -416,7 +434,7 @@ const RoomLayoutViewer: React.FC<RoomLayoutViewerProps> = ({onlyView}) => {
         let snappingDeltaX = snappedPoint.x - snappingPoints[index].x;
         let snappingDeltaY = snappedPoint.y - snappingPoints[index].y;
 
-        movedMovable.getDefiningPoints().forEach(p => {
+        getBehavior(movedGO).getDefiningPoints(movedGO).forEach(p => {
           p.x += snappingDeltaX;
           p.y += snappingDeltaY;
         });
@@ -425,18 +443,19 @@ const RoomLayoutViewer: React.FC<RoomLayoutViewerProps> = ({onlyView}) => {
       }
     }
 
-    return movedMovable;
+    return movedGO;
   }
 
-  function onMouseDownOnDefiningPoint(e: MouseEvent, movable: Movable, indexOfPoint: number) {
+
+  function onMouseDownOnDefiningPoint(e: MouseEvent, movable: GeometryObject, indexOfPoint: number) {
     if(tool !== "select") return;
 
     e.stopPropagation();
 
     initialMousePos.current = getMousePos(e);
-    initialDefiningPointPos.current = movable.getDefiningPoints()[indexOfPoint].copyWith({}) // Just for calculation
+    initialDefiningPointPos.current = {...getBehavior(movable).getDefiningPoints(movable)[indexOfPoint]} // Just for calculation
 
-    snapPointsRef.current = calculateSnapPoints(movable.getSnappablePoints());
+    snapPointsRef.current = calculateSnapPoints(getBehavior(movable).getSnappablePoints(movable));
 
     function onMove(event): void {
       const currentMouse = getMousePos(event);
@@ -448,7 +467,7 @@ const RoomLayoutViewer: React.FC<RoomLayoutViewerProps> = ({onlyView}) => {
       window.removeEventListener("mousemove", onMove);
       window.removeEventListener("mouseup", onUp);
       initialMousePos.current = null;
-      initialMovablePos.current = null;
+      initialGOPos.current = null;
     }
 
     window.addEventListener("mousemove", onMove);
@@ -456,20 +475,26 @@ const RoomLayoutViewer: React.FC<RoomLayoutViewerProps> = ({onlyView}) => {
     // WIP
   }
 
-  function onMouseDownOnMovable(e: MouseEvent, movable: Movable) {
+  function onMouseDownOnMovable(e: MouseEvent, geometryObject: GeometryObject) {
     if(tool !== "select") return;
 
+    // Mouse should only target the movable
     e.stopPropagation();
     
-    setSelectedMovable(movable);
+    // Initialize moving
+    setSelectedMovable(geometryObject);
     initialMousePos.current = getMousePos(e);
-    initialMovablePos.current = movable.copyWith({}); // Kopie erstellen, damit die ursprüngliche Position für die Berechnung der Verschiebung erhalten bleibt
+    initialGOPos.current = {...geometryObject}; // Kopie erstellen, damit die ursprüngliche Position für die Berechnung der Verschiebung erhalten bleibt
 
-    snapPointsRef.current = calculateSnapPoints(movable.getSnappablePoints());
+    if(geometryObject.type === "wall"){
+      snapPointsRef.current = wallBehavior.getSnappablePoints(geometryObject)
+    }
 
-    function onMove(ev) {
-      const currentMouse = getMousePos(ev);
-      const updatedMovable = moveMovable(movable, currentMouse);
+    snapPointsRef.current = calculateSnapPoints(getBehavior(geometryObject).getSnappablePoints(geometryObject));
+
+    function onMove(event) {
+      const currentMouse = getMousePos(event);
+      const updatedMovable = moveGeometryObject(geometryObject, currentMouse);
       setSelectedMovable(updatedMovable) // Für updates der Defining-Points im UI
     }
 
@@ -477,7 +502,7 @@ const RoomLayoutViewer: React.FC<RoomLayoutViewerProps> = ({onlyView}) => {
       window.removeEventListener("mousemove", onMove);
       window.removeEventListener("mouseup", onUp);
       initialMousePos.current = null;
-      initialMovablePos.current = null;
+      initialGOPos.current = null;
     }
 
     window.addEventListener("mousemove", onMove);
@@ -489,7 +514,7 @@ const RoomLayoutViewer: React.FC<RoomLayoutViewerProps> = ({onlyView}) => {
   function changeRoomName(r: Room, value: string): void {
     setRooms(prev => 
       prev.map(room => room.id === r.id 
-        ? room.copyWith({label: value}) 
+        ? {...room, label: value} 
         : room));
   }
 
@@ -504,6 +529,14 @@ const RoomLayoutViewer: React.FC<RoomLayoutViewerProps> = ({onlyView}) => {
   function changeFloorTo(floor: Floor){
     setSelectedFloorId(floor.id);
     setSelectedMovable(null);
+  }
+
+  function saveLayout(): void {
+    putLayout({floors: floors, walls: walls, rooms: rooms}).then(layout => {
+      setFloors(layout.floors);
+      setWalls(layout.walls);
+      setRooms(layout.rooms);
+    }).catch(console.error);
   }
 
   return (
@@ -531,9 +564,9 @@ const RoomLayoutViewer: React.FC<RoomLayoutViewerProps> = ({onlyView}) => {
               <button className={`select-button ${tool == "zoom-out" ? "active" : ""}`} onClick={() => setTool("zoom-out")}>
                 Zoom Out
               </button>
-              <div className="toolbar-floor">
-                
-              </div>
+              <button className={'select-button'} onClick={() => saveLayout()}>
+                Save
+              </button>
             </div>
 
             <div className="toolbar-right">
@@ -551,7 +584,7 @@ const RoomLayoutViewer: React.FC<RoomLayoutViewerProps> = ({onlyView}) => {
               <button className={`floor-button ${selectedFloorId === floor.id ? "active" : ""}`} 
                 onClick={() => changeFloorTo(floor)}
                 onContextMenu={(e) => handleFloorContextMenu(e, floor.id)}>
-                {editingFloorLabelId == floor.id 
+                {editingFloorLabelId === floor.id 
                   ? (
                     <input 
                       className="floor-input" 
@@ -600,8 +633,8 @@ const RoomLayoutViewer: React.FC<RoomLayoutViewerProps> = ({onlyView}) => {
                     width={Math.abs(r.p2.x - r.p1.x)}
                     height={Math.abs(r.p2.y - r.p1.y)}
                     fill="rgba(0, 255, 255, 0.3)"
-                    stroke={selectedMovable && selectedMovable.id === r.id ? "yellow" : "cyan"}
-                    strokeWidth={selectedMovable && selectedMovable.id === r.id ? "3" : "2"}
+                    stroke={selectedGeometryObject && selectedGeometryObject.id === r.id ? "yellow" : "cyan"}
+                    strokeWidth={selectedGeometryObject && selectedGeometryObject.id === r.id ? "3" : "2"}
                   />
                   <foreignObject
                     x={Math.min(r.p1.x, r.p2.x)}
@@ -628,8 +661,8 @@ const RoomLayoutViewer: React.FC<RoomLayoutViewerProps> = ({onlyView}) => {
                   y1={w.p1.y}
                   x2={w.p2.x}
                   y2={w.p2.y}
-                  stroke={selectedMovable && selectedMovable.id === w.id ? "yellow" : "white"}
-                  strokeWidth={selectedMovable && selectedMovable.id === w.id ? "6" : "4"}
+                  stroke={selectedGeometryObject && selectedGeometryObject.id === w.id ? "yellow" : "white"}
+                  strokeWidth={selectedGeometryObject && selectedGeometryObject.id === w.id ? "6" : "4"}
                   onMouseDown={(e) => onMouseDownOnMovable(e, w)}
                   onContextMenu={(e) => handleWallContextMenu(e, w.id)}
                 />
@@ -663,9 +696,10 @@ const RoomLayoutViewer: React.FC<RoomLayoutViewerProps> = ({onlyView}) => {
               )}
 
               {/* Selection handles */}
-              {selectedMovable && selectedMovable.getDefiningPoints().map((point, index) => (
+              {selectedGeometryObject && getBehavior(selectedGeometryObject)
+                .getDefiningPoints(selectedGeometryObject).map((point, index) => (
                 <circle
-                  key={`handle-${selectedMovable.id}-${index}`}
+                  key={`handle-${selectedGeometryObject.id}-${index}`}
                   cx={point.x}
                   cy={point.y}
                   r="8"
@@ -673,7 +707,7 @@ const RoomLayoutViewer: React.FC<RoomLayoutViewerProps> = ({onlyView}) => {
                   stroke="black"
                   strokeWidth="1"
                   style={{ cursor: 'pointer' }}
-                  onMouseDown={(e) => onMouseDownOnDefiningPoint(e, selectedMovable, index)}
+                  onMouseDown={(e) => onMouseDownOnDefiningPoint(e, selectedGeometryObject, index)}
                 />
               ))}
             </svg>
