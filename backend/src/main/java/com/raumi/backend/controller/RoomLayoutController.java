@@ -23,9 +23,8 @@ public class RoomLayoutController {
     // Gesamtes zurückschicken.
 
     @GetMapping()
-    public List<RoomDTO> getAllRooms() {
-
-        return List.of(new RoomDTO(UUID.randomUUID(), UUID.randomUUID(), "Room7", new PointDTO(0, 2), new PointDTO(200, 300)));
+    public LayoutDTO getLayout() {
+        return roomLayoutService.getLayout();
     }
 
     @PostMapping

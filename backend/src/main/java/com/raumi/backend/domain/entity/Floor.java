@@ -10,7 +10,7 @@ import java.util.UUID;
 
 @Entity
 public class Floor {
-    @Id
+    @Id @Getter @Setter
     private UUID id;
 
     @Getter @Setter

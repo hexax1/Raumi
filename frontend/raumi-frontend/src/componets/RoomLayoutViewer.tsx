@@ -1,9 +1,9 @@
 import { useState, useRef, type MouseEvent, useEffect } from "react";
-import { type Point, snapToPoints, type Wall, type Room, isSamePoint, snapToAnything, constructRoom, copyWall, copyRoom, roomBehavior, wallBehavior, getBehavior, type GeometryObject, constructPoint, constructWall } from "../utils/geometry";
+import { type Point, snapToPoints, type Wall, type Room, isSamePoint, snapToAnything, constructRoom, copyWall, copyRoom, roomBehavior, wallBehavior, getBehavior, type GeometryObject, constructPoint, constructWall, copyGeometryObject } from "../utils/geometry";
 import './RoomLayoutViewer.css'
 import ContextMenu from "./ContextMenu";
 import { checkEnterKey } from "../utils/input";
-import { putLayout, type Floor } from "../services/RoomLayoutService";
+import { getLayout, putLayout, type Floor } from "../services/RoomLayoutService";
 
 
 interface RoomLayoutViewerProps {
@@ -24,7 +24,7 @@ const RoomLayoutViewer: React.FC<RoomLayoutViewerProps> = ({onlyView}) => {
   const [selectedFloorId, setSelectedFloorId] = useState<string>(initialFloor.id);
   const [editingFloorLabelId, setEditingFloorLabelId] = useState<string | null>(null);
 
-  const [selectedGeometryObject, setSelectedMovable] = useState<Wall | Room | null>(null);
+  const [selectedGeometryObject, setSelectedMovable] = useState<GeometryObject | null>(null);
 
   const [tool, setTool] = useState<"wall" | "room" | "select" | "zoom-in" | "zoom-out">("wall");
   const [zoom, setZoom] = useState(1);
@@ -49,6 +49,16 @@ const RoomLayoutViewer: React.FC<RoomLayoutViewerProps> = ({onlyView}) => {
   const ZOOM_MAX = 3;
 
   useEffect(() => {
+    getLayout().then((layout) => {
+      debugger;
+      setFloors(layout.floors);
+      setRooms(layout.rooms);
+      setWalls(layout.walls);
+      if(layout.floors.length > 0){
+        setSelectedFloorId(layout.floors[0].id);
+      }
+    })
+
     if(editorContainerRef.current)
       editorContainerRef.current.scrollTo({
         left: 360,
@@ -356,7 +366,7 @@ const RoomLayoutViewer: React.FC<RoomLayoutViewerProps> = ({onlyView}) => {
         return updatedMovable;
       }
     }
-    return {...movable}
+    return copyGeometryObject(movable, {})
   }
 
   /**
@@ -404,7 +414,7 @@ const RoomLayoutViewer: React.FC<RoomLayoutViewerProps> = ({onlyView}) => {
   }
 
   function updateGeometryObject(initialGO: GeometryObject, dx: number, dy: number): GeometryObject {
-    let movedGO = {...initialGO};
+    let movedGO = copyGeometryObject(initialGO, {});
 
     // definierende Punkte initialisieren
     let initialDefiningPoints = getBehavior(initialGO).getDefiningPoints(initialGO);
@@ -484,7 +494,7 @@ const RoomLayoutViewer: React.FC<RoomLayoutViewerProps> = ({onlyView}) => {
     // Initialize moving
     setSelectedMovable(geometryObject);
     initialMousePos.current = getMousePos(e);
-    initialGOPos.current = {...geometryObject}; // Kopie erstellen, damit die ursprüngliche Position für die Berechnung der Verschiebung erhalten bleibt
+    initialGOPos.current = copyGeometryObject(geometryObject, {}); // Kopie erstellen, damit die ursprüngliche Position für die Berechnung der Verschiebung erhalten bleibt
 
     if(geometryObject.type === "wall"){
       snapPointsRef.current = wallBehavior.getSnappablePoints(geometryObject)
@@ -514,7 +524,7 @@ const RoomLayoutViewer: React.FC<RoomLayoutViewerProps> = ({onlyView}) => {
   function changeRoomName(r: Room, value: string): void {
     setRooms(prev => 
       prev.map(room => room.id === r.id 
-        ? {...room, label: value} 
+        ? copyRoom(room, {label: value})
         : room));
   }
 

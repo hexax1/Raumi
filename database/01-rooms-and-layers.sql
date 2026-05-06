@@ -25,7 +25,7 @@ CREATE TABLE room (
   -- Foreign Key
   CONSTRAINT fk_rooms_floor
     FOREIGN KEY (floor_id)
-    REFERENCES floors(id)
+    REFERENCES floor(id)
     ON DELETE CASCADE
 );
 
@@ -44,6 +44,6 @@ CREATE TABLE wall (
   -- Foreign Key
   CONSTRAINT fk_walls_floor
     FOREIGN KEY (floor_id)
-    REFERENCES floors(id)
+    REFERENCES floor(id)
     ON DELETE CASCADE
 );

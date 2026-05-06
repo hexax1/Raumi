@@ -18,9 +18,18 @@ export type Wall = {
 export function copyWall(wall: Wall, update: Partial<Wall>): Wall {
   return { ...wall, 
     id: update.id ?? wall.id,
-    p1: update.p1 ?? wall.p1,
-    p2: update.p2 ?? wall.p2,
+    p1: update.p1 ?? {...wall.p1},
+    p2: update.p2 ?? {...wall.p2},
     floorId: update.floorId ?? wall.floorId
+  }
+}
+
+export function copyGeometryObject(geometryObject: GeometryObject, update: Partial<GeometryObject>){
+  return { ...geometryObject, 
+    id: update.id ?? geometryObject.id,
+    p1: update.p1 ?? {...geometryObject.p1},
+    p2: update.p2 ?? {...geometryObject.p2},
+    floorId: update.floorId ?? geometryObject.floorId
   }
 }
 
@@ -156,8 +165,6 @@ export function snapToAxisOfPoint(shiftingPoint: Point, fixedPoint: Point, maxAn
       closestCardinal = cardinal;
     }
   }
-  
-  console.log(minDiff)
 
   // If the angle is close to a cardinal direction, snap it
   if (minDiff < maxAngle && closestCardinal != null) {
