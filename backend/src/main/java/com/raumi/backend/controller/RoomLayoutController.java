@@ -27,11 +27,6 @@ public class RoomLayoutController {
         return roomLayoutService.getLayout();
     }
 
-    @PostMapping
-    public RoomDTO createRoom(@RequestBody RoomDTO room){
-        return roomLayoutService.createRoom(room);
-    }
-
     @PutMapping
     public LayoutDTO putLayout(@RequestBody LayoutDTO layout){
         return roomLayoutService.putLayout(layout);

@@ -24,10 +24,6 @@ public class RoomLayoutService {
     private final RoomRepository roomRepository;
     private final WallRepository wallRepository;
 
-    public RoomDTO createRoom(RoomDTO room) {
-        return room;
-    }
-
     public LayoutDTO getLayout() {
         List<Floor> floors = floorRepository.findAll();
         List<Room> rooms = roomRepository.findAll();

@@ -467,7 +467,7 @@ const RoomLayoutViewer: React.FC<RoomLayoutViewerProps> = ({onlyView}) => {
 
     snapPointsRef.current = calculateSnapPoints(getBehavior(movable).getSnappablePoints(movable));
 
-    function onMove(event): void {
+    function onMove(event: any): void {
       const currentMouse = getMousePos(event);
       const updatedMovable = moveDefiningPoint(movable, indexOfPoint, currentMouse)
       setSelectedMovable(updatedMovable) // Für updates der Defining-Points im UI
@@ -502,7 +502,7 @@ const RoomLayoutViewer: React.FC<RoomLayoutViewerProps> = ({onlyView}) => {
 
     snapPointsRef.current = calculateSnapPoints(getBehavior(geometryObject).getSnappablePoints(geometryObject));
 
-    function onMove(event) {
+    function onMove(event: any) {
       const currentMouse = getMousePos(event);
       const updatedMovable = moveGeometryObject(geometryObject, currentMouse);
       setSelectedMovable(updatedMovable) // Für updates der Defining-Points im UI
