@@ -10,7 +10,7 @@ function App() {
   return (
     <>
       <section id="center">
-        <RoomLayoutViewer onlyView={false}/>
+        <RoomLayoutViewer editable={false}/>
       </section>
 
       <div className="ticks"></div>

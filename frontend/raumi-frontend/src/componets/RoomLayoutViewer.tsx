@@ -7,10 +7,10 @@ import { getLayout, putLayout, type Floor } from "../services/RoomLayoutService"
 
 
 interface RoomLayoutViewerProps {
-    onlyView: Boolean
+    editable: boolean
 }
 
-const RoomLayoutViewer: React.FC<RoomLayoutViewerProps> = ({onlyView}) => {
+const RoomLayoutViewer: React.FC<RoomLayoutViewerProps> = ({editable}) => {
   const [walls, setWalls] = useState<Wall[]>([]);
   const [draftWall, setDraftWall] = useState<Wall | null>(null);
 
@@ -26,7 +26,7 @@ const RoomLayoutViewer: React.FC<RoomLayoutViewerProps> = ({onlyView}) => {
 
   const [selectedGeometryObject, setSelectedMovable] = useState<GeometryObject | null>(null);
 
-  const [tool, setTool] = useState<"wall" | "room" | "select" | "zoom-in" | "zoom-out">("wall");
+  const [tool, setTool] = useState<"wall" | "room" | "select" | "zoom-in" | "zoom-out" | undefined>();
   const [zoom, setZoom] = useState(1);
   const [canvasBounds, setCanvasBounds] = useState({ minX: 0, minY: 0, width: 1600, height: 1200 });
   const [snapEnabled, setSnapEnabled] = useState(true);
@@ -49,6 +49,20 @@ const RoomLayoutViewer: React.FC<RoomLayoutViewerProps> = ({onlyView}) => {
   const ZOOM_MAX = 3;
 
   useEffect(() => {
+    setTool(editable ? "wall" : undefined);
+
+    // Überschreibe mit Gespeicherten Daten aus der Datenbank
+    getAndApplyLayout();
+
+    // In die Mitte scrollen
+    if(editorContainerRef.current)
+      editorContainerRef.current.scrollTo({
+        left: 360,
+        top: 290
+      });
+  }, []); // läuft nur einmal beim Mount
+
+  function getAndApplyLayout() {
     // Überschreibe mit Gespeicherten Daten aus der Datenbank
     getLayout().then((layout) => {
       setFloors(layout.floors);
@@ -58,13 +72,7 @@ const RoomLayoutViewer: React.FC<RoomLayoutViewerProps> = ({onlyView}) => {
         setSelectedFloorId(layout.floors[0].id);
       }
     })
-
-    if(editorContainerRef.current)
-      editorContainerRef.current.scrollTo({
-        left: 360,
-        top: 290
-      });
-  }, []); // läuft nur einmal beim Mount
+  }
 
   function getMousePos(e: MouseEvent): Point {
     if(svgRef.current == null) return constructPoint(Number.MIN_VALUE, Number.MIN_VALUE)
@@ -132,10 +140,43 @@ const RoomLayoutViewer: React.FC<RoomLayoutViewerProps> = ({onlyView}) => {
   }
 
   function getDefaultContextMenuItems() {
-    return [
-      { label: "Clear Walls", onClick: () => setWalls([]) },
-      { label: "Export JSON", onClick: () => alert(JSON.stringify({ floors, walls, rooms }, null, 2)) }
-    ];
+    let menuItems = [
+      { label: "Reload", onClick: () => getAndApplyLayout()}
+    ]
+
+    if (editable) {
+      menuItems.push({ label: "Clear Walls", onClick: () => setWalls([]) });
+      menuItems.push({ label: "Export JSON", onClick: () => alert(JSON.stringify({ floors, walls, rooms }, null, 2)) });
+    }
+
+    return menuItems;
+  }
+
+  function zoomIn(){
+    const nextZoom = Math.min(zoom * ZOOM_STEP, ZOOM_MAX)
+
+    zoomTo(nextZoom);
+  }
+
+  function zoomOut(){
+    const nextZoom = Math.max(zoom / ZOOM_STEP, ZOOM_MIN);
+
+    zoomTo(nextZoom);
+  }
+
+  function zoomTo(nextZoom: number){
+      if(editorContainerRef.current == null) return;
+    // Viewport muss sich auch ändern
+      const maxScrollLeft = canvasBounds.width * nextZoom - editorContainerRef.current.clientWidth; // Maybe unnötig, weil automatisch geclampt wird
+      const scrollLeftByFormula = (editorContainerRef.current.scrollLeft + editorContainerRef.current.clientWidth/2) * nextZoom / zoom - editorContainerRef.current.clientWidth/2;
+      editorContainerRef.current.scrollLeft = Math.min(scrollLeftByFormula, maxScrollLeft);
+
+      const maxScrollTop = canvasBounds.height * nextZoom - editorContainerRef.current.clientHeight; // Maybe unnötig, weil automatisch geclampt wird
+      const scrollTopByFormula = (editorContainerRef.current.scrollTop + editorContainerRef.current.clientHeight/2) * nextZoom / zoom - editorContainerRef.current.clientHeight/2;
+      editorContainerRef.current.scrollTop = Math.min(scrollTopByFormula, maxScrollTop);
+      // Kleiner Bug: Wenn ich selber scrolle und dann reinzoome, wird trotzdem die alte Position verwendet.
+      setZoom(nextZoom);
+      return;
   }
 
   function deleteWall(id: string) {
@@ -174,6 +215,8 @@ const RoomLayoutViewer: React.FC<RoomLayoutViewerProps> = ({onlyView}) => {
   }
 
   function handleWallContextMenu(e: MouseEvent, id: string) {
+    if(!editable) return;
+
     e.preventDefault();
     contextMenuModeRef.current = 'wall';
     setContextMenuItems([
@@ -183,6 +226,8 @@ const RoomLayoutViewer: React.FC<RoomLayoutViewerProps> = ({onlyView}) => {
   }
 
   function handleRoomContextMenu(e: MouseEvent, id: string) {
+    if(!editable) return;
+
     e.preventDefault();
     contextMenuModeRef.current = 'room';
     setContextMenuItems([
@@ -192,6 +237,8 @@ const RoomLayoutViewer: React.FC<RoomLayoutViewerProps> = ({onlyView}) => {
   }
 
   function handleFloorContextMenu(e: MouseEvent, id: string) {
+    if(!editable) return;
+
     e.preventDefault();
     contextMenuModeRef.current = 'floor';
     const lastFloor = floors.length <= 1;
@@ -559,39 +606,43 @@ const RoomLayoutViewer: React.FC<RoomLayoutViewerProps> = ({onlyView}) => {
           
           <div className="toolbar">
             <div className="toolbar-left">
-              <button className={`select-button ${tool == "select" ? "active" : ""}`} onClick={() => setTool("select")}>
-                Select
-              </button>
-              <button className={`select-button ${tool == "wall" ? "active" : ""}`} onClick={() => setTool("wall")}>
-                Wall
-              </button>
-              <button className={`select-button ${tool == "room" ? "active" : ""}`} onClick={() => setTool("room")}>
-                Room
-              </button>
-              <button className={`select-button ${tool == "zoom-in" ? "active" : ""}`} onClick={() => setTool("zoom-in")}>
-                Zoom In
-              </button>
-              <button className={`select-button ${tool == "zoom-out" ? "active" : ""}`} onClick={() => setTool("zoom-out")}>
-                Zoom Out
-              </button>
-              <button className={'select-button'} onClick={() => saveLayout()}>
-                Save
-              </button>
+              {editable && <>
+                  <button className={`select-button ${tool == "select" ? "active" : ""}`} onClick={() => setTool("select")}>
+                    Select
+                  </button>
+                  <button className={`select-button ${tool == "wall" ? "active" : ""}`} onClick={() => setTool("wall")}>
+                    Wall
+                  </button>
+                  <button className={`select-button ${tool == "room" ? "active" : ""}`} onClick={() => setTool("room")}>
+                    Room
+                  </button>
+                  <button className={'select-button'} onClick={() => saveLayout()}>
+                    Save
+                  </button>
+                  <button className={`select-button ${tool == "zoom-in" ? "active" : ""}`} onClick={() => setTool("zoom-in")}>
+                    Zoom In
+                  </button>
+                  <button className={`select-button ${tool == "zoom-out" ? "active" : ""}`} onClick={() => setTool("zoom-out")}>
+                    Zoom Out
+                  </button>
+                </>
+              }
             </div>
 
             <div className="toolbar-right">
-              <button className="button-snap" onClick={() => setSnapEnabled(!snapEnabled)}>
-                Snap: {snapEnabled ? "ON" : "OFF"}
-              </button>
-              <button className="button-zoom-level" onClick={() => null}>
-                Zoom: {Math.round(zoom * 100)}%
-              </button>
+              {editable && <>
+                  <button className="button-snap" onClick={() => setSnapEnabled(!snapEnabled)}>
+                    Snap: {snapEnabled ? "ON" : "OFF"}
+                  </button>
+                </>
+              }
             </div>
-
           </div>
           <div className="floor-select">
             {floors.map(floor => (
-              <button className={`floor-button ${selectedFloorId === floor.id ? "active" : ""}`} 
+              <button 
+                key={floor.id} 
+                className={`floor-button ${selectedFloorId === floor.id ? "active" : ""}`} 
                 onClick={() => changeFloorTo(floor)}
                 onContextMenu={(e) => handleFloorContextMenu(e, floor.id)}>
                 {editingFloorLabelId === floor.id 
@@ -606,10 +657,26 @@ const RoomLayoutViewer: React.FC<RoomLayoutViewerProps> = ({onlyView}) => {
               </button>
             ))}
 
-            <button className="floor-button" onClick={addFloor}>
+            {editable && 
+              <button className="floor-button" onClick={addFloor}>
+                +
+              </button>
+            }
+          </div>
+          
+          <div className="zoom-settings">
+            <button className="button-zoom-level" onClick={() => zoomOut()}>
+              -
+            </button>
+            <button className="button-zoom-level" onClick={() => null}>
+              Zoom: {Math.round(zoom * 100)}%
+            </button>
+            <button className="button-zoom-level" onClick={() => zoomIn()}>
               +
             </button>
           </div>
+
+
           <div 
             ref={editorContainerRef}
             className="editor-container">
@@ -653,12 +720,17 @@ const RoomLayoutViewer: React.FC<RoomLayoutViewerProps> = ({onlyView}) => {
                     height={Math.abs(r.p2.y - r.p1.y)}
                   >
                     <div style={{width: "100%", height: "100%", display: "flex", justifyContent: "center", alignItems: "center"}}>
-                      <input
-                      value={r.label}
-                      type="text" 
-                      placeholder="Raumname" 
-                      className="room-name-input"
-                      onChange={(e) => changeRoomName(r, e.target.value)}/>
+                      
+                      { editable ? 
+                        <input
+                        value={r.label}
+                        type="text" 
+                        placeholder="Raumname" 
+                        className="room-name-input"
+                        onChange={(e) => changeRoomName(r, e.target.value)}/>
+                        :
+                        <p className="room-name-input">{r.label}</p>
+                      }
                     </div>
                   </foreignObject> 
                 </g>
